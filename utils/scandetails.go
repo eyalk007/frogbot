@@ -6,14 +6,14 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/jfrog/jfrog-cli-security/sca/bom/buildinfo"
-	"github.com/jfrog/jfrog-cli-security/sca/scan/scangraph"
-
+	"github.com/jfrog/jfrog-cli-security/sca/bom/xrayplugin"
+	"github.com/jfrog/jfrog-cli-security/sca/scan/enrich"
 	clientservices "github.com/jfrog/jfrog-client-go/xsc/services"
 
 	"github.com/jfrog/froggit-go/vcsclient"
 	"github.com/jfrog/jfrog-cli-core/v2/utils/config"
 	"github.com/jfrog/jfrog-cli-security/commands/audit"
+	securityUtils "github.com/jfrog/jfrog-cli-security/utils"
 	"github.com/jfrog/jfrog-cli-security/utils/results"
 	"github.com/jfrog/jfrog-cli-security/utils/severityutils"
 	"github.com/jfrog/jfrog-client-go/utils/log"
@@ -35,8 +35,11 @@ type ScanDetails struct {
 	configProfile       *clientservices.ConfigProfile
 	allowPartialResults bool
 
-	diffScan         bool
-	ResultsToCompare *results.SecurityCommandResults
+	diffScan                  bool
+	ResultsToCompare          *results.SecurityCommandResults
+	sarifOutputPath           string
+	customAnalyzerManagerPath string
+	scansToPerform            []securityUtils.SubScanType
 
 	results.ResultContext
 	MultiScanId string
@@ -47,6 +50,35 @@ type ScanDetails struct {
 
 func NewScanDetails(client vcsclient.VcsClient, server *config.ServerDetails, git *Git) *ScanDetails {
 	return &ScanDetails{client: client, ServerDetails: server, Git: git}
+}
+
+// find a better way
+func (sc *ScanDetails) Clone() *ScanDetails {
+	clone := &ScanDetails{
+		Project:                   sc.Project,
+		Git:                       sc.Git,
+		XscGitInfoContext:         sc.XscGitInfoContext,
+		ServerDetails:             sc.ServerDetails,
+		client:                    sc.client,
+		fixableOnly:               sc.fixableOnly,
+		disableJas:                sc.disableJas,
+		skipAutoInstall:           sc.skipAutoInstall,
+		minSeverityFilter:         sc.minSeverityFilter,
+		baseBranch:                sc.baseBranch,
+		configProfile:             sc.configProfile,
+		allowPartialResults:       sc.allowPartialResults,
+		diffScan:                  sc.diffScan,
+		ResultsToCompare:          sc.ResultsToCompare,
+		sarifOutputPath:           sc.sarifOutputPath,
+		customAnalyzerManagerPath: sc.customAnalyzerManagerPath,
+		scansToPerform:            sc.scansToPerform,
+		ResultContext:             sc.ResultContext,
+		MultiScanId:               sc.MultiScanId,
+		XrayVersion:               sc.XrayVersion,
+		XscVersion:                sc.XscVersion,
+		StartTime:                 sc.StartTime,
+	}
+	return clone
 }
 
 func (sc *ScanDetails) SetJfrogVersions(xrayVersion, xscVersion string) *ScanDetails {
@@ -63,6 +95,34 @@ func (sc *ScanDetails) SetDiffScan(diffScan bool) *ScanDetails {
 func (sc *ScanDetails) SetResultsToCompare(results *results.SecurityCommandResults) *ScanDetails {
 	sc.ResultsToCompare = results
 	return sc
+}
+
+// NEW: Set SARIF output path for parallel scanning support
+func (sc *ScanDetails) SetSarifOutputPath(path string) *ScanDetails {
+	sc.sarifOutputPath = path
+	return sc
+}
+
+func (sc *ScanDetails) SarifOutputPath() string {
+	return sc.sarifOutputPath
+}
+
+func (sc *ScanDetails) SetCustomAnalyzerManagerBinaryPath(path string) *ScanDetails {
+	sc.customAnalyzerManagerPath = path
+	return sc
+}
+
+func (sc *ScanDetails) CustomAnalyzerManagerBinaryPath() string {
+	return sc.customAnalyzerManagerPath
+}
+
+func (sc *ScanDetails) SetScansToPerform(scansToPerform []securityUtils.SubScanType) *ScanDetails {
+	sc.scansToPerform = scansToPerform
+	return sc
+}
+
+func (sc *ScanDetails) ScansToPerform() []securityUtils.SubScanType {
+	return sc.scansToPerform
 }
 
 func (sc *ScanDetails) SetDisableJas(disable bool) *ScanDetails {
@@ -151,7 +211,7 @@ func (sc *ScanDetails) AllowPartialResults() bool {
 	return sc.allowPartialResults
 }
 
-func (sc *ScanDetails) RunInstallAndAudit(workDirs ...string) (auditResults *results.SecurityCommandResults) {
+func (sc *ScanDetails) RunInstallAndAudit(gitInfoContext *xscservices.XscGitInfoContext, uploadCdxResults bool, workDirs ...string) (auditResults *results.SecurityCommandResults) {
 	auditBasicParams := (&audit.AuditBasicParams{}).
 		SetXrayVersion(sc.XrayVersion).
 		SetXscVersion(sc.XscVersion).
@@ -169,20 +229,33 @@ func (sc *ScanDetails) RunInstallAndAudit(workDirs ...string) (auditResults *res
 		SetExclusions(sc.PathExclusions).
 		SetIsRecursiveScan(sc.IsRecursiveScan).
 		SetUseJas(!sc.DisableJas()).
+		SetScansToPerform(sc.scansToPerform).
 		SetConfigProfile(sc.configProfile)
 
 	auditParams := audit.NewAuditParams().
-		SetBomGenerator(buildinfo.NewBuildInfoBomGenerator()).
-		SetScaScanStrategy(scangraph.NewScanGraphStrategy()).
 		SetWorkingDirs(workDirs).
 		SetMinSeverityFilter(sc.MinSeverityFilter()).
 		SetFixableOnly(sc.FixableOnly()).
 		SetGraphBasicParams(auditBasicParams).
 		SetResultsContext(sc.ResultContext).
+		SetBomGenerator(xrayplugin.NewXrayLibBomGenerator()).
+		SetScaScanStrategy(enrich.NewEnrichScanStrategy()).
+		SetUploadCdxResults(uploadCdxResults).
+		SetWorkingDirs(workDirs).
+		SetRtResultRepository("frogbot").
+		SetGitContext(gitInfoContext).
 		SetDiffMode(sc.diffScan).
 		SetResultsToCompare(sc.ResultsToCompare).
 		SetMultiScanId(sc.MultiScanId).
-		SetStartTime(sc.StartTime)
+		SetStartTime(sc.StartTime).
+		SetCustomAnalyzerManagerBinaryPath(sc.customAnalyzerManagerPath)
+
+	//should be transparent to frogbot. need to talk with cli-security team
+	threadCount := len(sc.ScansToPerform())
+	if threadCount == 0 {
+		threadCount = 5
+	}
+	auditParams.SetThreads(threadCount)
 
 	return audit.RunAudit(auditParams)
 }

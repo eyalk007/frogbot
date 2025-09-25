@@ -225,7 +225,7 @@ func (cfp *ScanRepositoryCmd) scanAndFixProject(repository *utils.Repository) (i
 // Audit the dependencies of the current commit.
 func (cfp *ScanRepositoryCmd) scan(currentWorkingDir string) (*results.SecurityCommandResults, error) {
 	// Audit commit code
-	auditResults := cfp.scanDetails.RunInstallAndAudit(currentWorkingDir)
+	auditResults := cfp.scanDetails.RunInstallAndAudit(cfp.scanDetails.XscGitInfoContext, true, currentWorkingDir)
 	if err := auditResults.GetErrors(); err != nil {
 		return nil, err
 	}

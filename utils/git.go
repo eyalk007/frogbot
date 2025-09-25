@@ -169,12 +169,20 @@ func (gm *GitManager) CheckoutToHash(hash string) error {
 	return nil
 }
 
-func (gm *GitManager) Fetch() error {
+// potential optimization of fetch
+func (gm *GitManager) Fetch(baseBranch, targetBranch string) error {
 	log.Debug("Running git fetch...")
+	fetchRefFormat := "+refs/heads/%s:refs/remotes/%s/%s"
+
 	err := gm.localGitRepository.Fetch(&git.FetchOptions{
 		RemoteName: gm.remoteName,
 		RemoteURL:  gm.remoteGitUrl,
 		Auth:       gm.auth,
+		Tags:       git.NoTags,
+		RefSpecs: []config.RefSpec{
+			config.RefSpec(fmt.Sprintf(fetchRefFormat, baseBranch, gm.remoteName, baseBranch)),
+			config.RefSpec(fmt.Sprintf(fetchRefFormat, targetBranch, gm.remoteName, targetBranch)),
+		},
 	})
 	if err != nil && err != git.NoErrAlreadyUpToDate {
 		return fmt.Errorf("git fetch failed with error: %s", err.Error())

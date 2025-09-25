@@ -284,7 +284,7 @@ func GenerateFrogbotSarifReport(extendedResults *results.SecurityCommandResults,
 	convertor := conversion.NewCommandResultsConvertor(conversion.ResultConvertParams{
 		IncludeVulnerabilities: extendedResults.IncludesVulnerabilities(),
 		HasViolationContext:    extendedResults.HasViolationContext(),
-		AllowedLicenses:        allowedLicenses,
+		//AllowedLicenses:        allowedLicenses,
 	})
 	sarifReport, err := convertor.ConvertToSarif(extendedResults)
 	if err != nil {
