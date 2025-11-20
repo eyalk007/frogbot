@@ -20,8 +20,8 @@
 #     repositories:
 #       - repository: templates
 #         type: github
-#         name: jfrog/frogbot
-#         ref: refs/heads/v3
+#         name: eyalk007/frogbot
+#         ref: refs/heads/add-git-providers-actions
 #
 #   variables:
 #     JF_URL: $(JF_URL)

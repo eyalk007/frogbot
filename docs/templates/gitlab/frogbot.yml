@@ -1,7 +1,7 @@
 # Frogbot Security Scan - GitLab Template
 #
 #   include:
-#     - remote: 'https://raw.githubusercontent.com/jfrog/frogbot/v3/docs/templates/gitlab/frogbot.yml'
+#     - remote: 'https://raw.githubusercontent.com/eyalk007/frogbot/add-git-providers-actions/docs/templates/gitlab/frogbot.yml'
 #
 #   variables:
 #     JF_URL: $JF_URL
