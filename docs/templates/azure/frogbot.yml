@@ -1,0 +1,121 @@
+# Frogbot Security Scan - Azure DevOps Template
+#
+# ============================================================================
+# MINIMAL SETUP - Add this to your azure-pipelines.yml:
+# ============================================================================
+#
+#   trigger:
+#     branches:
+#       include: [main]
+#   pr:
+#     branches:
+#       include: ['*']
+#   schedules:
+#     - cron: "0 0 * * *"
+#       displayName: Daily scan
+#       branches:
+#         include: [main]
+#
+#   resources:
+#     repositories:
+#       - repository: templates
+#         type: github
+#         name: jfrog/frogbot
+#         ref: refs/heads/v3
+#
+#   variables:
+#     JF_URL: $(JF_URL)
+#     JF_ACCESS_TOKEN: $(JF_ACCESS_TOKEN)
+#     JF_GIT_TOKEN: $(System.AccessToken)
+#
+#   jobs:
+#     - template: docs/templates/azure/frogbot.yml@templates
+#
+# That's it! This will:
+#   - Scan pull requests automatically when opened/updated
+#   - Scan main branch on every push
+#   - Scan daily at midnight (customize cron schedule as needed)
+#
+# Set these 2 variables in Azure Pipelines (Pipelines → Edit → Variables):
+#   - JF_URL (your JFrog instance URL)
+#   - JF_ACCESS_TOKEN (mark as secret)
+#
+# Note: Uses ubuntu-latest by default. Works on Windows, macOS, and Linux runners
+#
+# Optional - Add custom Frogbot configuration:
+#   variables:
+#     # Common flags:
+#     JF_MIN_SEVERITY: "high"           # Only report High/Critical
+#     JF_WATCHES: "watch-name"          # Use specific Xray watch
+#     JF_PROJECT: "project-key"         # JFrog project
+#     JF_FIXABLE_ONLY: "TRUE"           # Only report fixable issues
+#     JF_FAIL: "FALSE"                  # Don't fail pipeline on issues
+#     JF_WORKING_DIR: "path/to/project" # Scan specific directory
+#     # See full list: https://jfrog.com/help/r/jfrog-security-user-guide/frogbot-optional-configuration-parameters
+#
+# Optional - Use custom runner pool:
+#   jobs:
+#     - template: docs/templates/azure/frogbot.yml@templates
+#       parameters:
+#         pool:
+#           vmImage: 'windows-latest'  # or 'macos-latest', 'ubuntu-latest'
+#           # OR use self-hosted:
+#           # name: 'my-agent-pool'
+#
+# Optional - Customize triggers (remove PR scans, change branches, adjust schedule):
+#   # Modify trigger/pr/schedules sections in your azure-pipelines.yml
+#   # See: https://learn.microsoft.com/azure/devops/pipelines/yaml-schema
+
+
+parameters:
+  - name: pool
+    type: object
+    default:
+      vmImage: 'ubuntu-latest'
+
+jobs:
+  - job: FrogbotScan
+    displayName: 'Frogbot Security Scan'
+    pool: ${{ parameters.pool }}
+    
+    steps:
+      - checkout: self
+        persistCredentials: true
+      
+      - task: CmdLine@2
+        displayName: 'Run Frogbot Security Scan'
+        env:
+          # Required - set these in your pipeline variables
+          JF_URL: $(JF_URL)
+          JF_ACCESS_TOKEN: $(JF_ACCESS_TOKEN)
+          JF_GIT_TOKEN: $(JF_GIT_TOKEN)
+          
+          # Auto-configured from Azure DevOps
+          JF_GIT_PROVIDER: 'azureRepos'
+          JF_GIT_OWNER: $(System.TeamProject)
+          JF_GIT_PROJECT: $(System.TeamProject)
+          JF_GIT_REPO: $(Build.Repository.Name)
+          JF_GIT_API_ENDPOINT: $(System.CollectionUri)
+          
+          # Auto-detect PR vs Repo scan
+          JF_GIT_BASE_BRANCH: $(if eq(variables['Build.Reason'], 'PullRequest'), variables['System.PullRequest.TargetBranchName'], variables['Build.SourceBranchName'])
+          JF_GIT_PULL_REQUEST_ID: $(System.PullRequest.PullRequestId)
+          
+          # Note: Any variables you define in your pipeline (like JF_MIN_SEVERITY, JF_WATCHES, etc.)
+          # will automatically be available to Frogbot
+        inputs:
+          script: |
+            # Determine command based on build reason
+            if [ "$(Build.Reason)" == "PullRequest" ]; then
+              FROGBOT_CMD="scan-pull-request"
+            else
+              FROGBOT_CMD="scan-repository"
+            fi
+            
+            # Download Frogbot
+            getFrogbotScriptPath=$(if [ -z "$JF_RELEASES_REPO" ]; then echo "https://releases.jfrog.io"; else echo "${JF_URL}/artifactory/${JF_RELEASES_REPO}"; fi)
+            curl -fLg "$getFrogbotScriptPath/artifactory/frogbot/v2/[RELEASE]/getFrogbot.sh" | sh
+            
+            # Run Frogbot
+            ./frogbot $FROGBOT_CMD
+

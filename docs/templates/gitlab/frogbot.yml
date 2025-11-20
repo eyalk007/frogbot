@@ -1,0 +1,98 @@
+# Frogbot Security Scan - GitLab Template
+#
+#   include:
+#     - remote: 'https://raw.githubusercontent.com/jfrog/frogbot/v3/docs/templates/gitlab/frogbot.yml'
+#
+#   variables:
+#     JF_URL: $JF_URL
+#     JF_ACCESS_TOKEN: $JF_ACCESS_TOKEN
+#     JF_GIT_TOKEN: $JF_GIT_TOKEN
+#
+# That's it! This will:
+#   - Scan pull requests automatically when opened/updated
+#   - Scan main branch on every push
+#   - Scan on scheduled pipelines (configure schedule in GitLab UI: CI/CD → Schedules)
+#
+# Set these 3 variables in GitLab (Settings → CI/CD → Variables):
+#   - JF_URL
+#   - JF_ACCESS_TOKEN
+#   - JF_GIT_TOKEN
+#
+# Note: This template uses Docker and works on Ubuntu, Windows, and macOS runners
+#       with Docker executor (the default for GitLab.com and most self-hosted setups)
+#
+# Optional - Add custom Frogbot configuration:
+#   variables:
+#     # Common flags:
+#     JF_MIN_SEVERITY: "high"           # Only report High/Critical
+#     JF_WATCHES: "watch-name"          # Use specific Xray watch
+#     JF_PROJECT: "project-key"         # JFrog project
+#     JF_FIXABLE_ONLY: "TRUE"           # Only report fixable issues
+#     JF_FAIL: "FALSE"                  # Don't fail pipeline on issues
+#     JF_WORKING_DIR: "path/to/project" # Scan specific directory
+#     # See full list: https://jfrog.com/help/r/jfrog-security-user-guide/shift-left-on-security/frogbot/configure-frogbot/frogbot-optional-configuration-parameters
+#
+# Optional - Customize when jobs run:
+#   # Make PR scans manual instead of automatic:
+#   frogbot-pr:
+#     rules:
+#       - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+#         when: manual
+#
+#   # Disable PR scans completely:
+#   frogbot-pr:
+#     rules:
+#       - when: never
+#
+#   # Scan different branch or disable schedule:
+#   frogbot-repo:
+#     rules:
+#       - if: $CI_COMMIT_BRANCH == "develop"  # Scan develop instead of main
+#       # Remove schedule line to disable scheduled scans
+#
+#   # Disable repository scans completely:
+#   frogbot-repo:
+#     rules:
+#       - when: never
+#
+#   # Note: Configure scheduled scans in GitLab UI (CI/CD → Schedules)
+#
+# Optional - Use custom Docker image (applies to both PR and repo scans):
+#   .frogbot-base:
+#     image: my-registry/my-custom-image:tag
+#
+
+
+# Base configuration
+.frogbot-base:
+  image: releases-docker.jfrog.io/jfrog-ecosystem-integration-env
+  variables:
+    # Auto-configured from GitLab CI variables
+    JF_GIT_PROVIDER: "gitlab"
+    JF_GIT_OWNER: $CI_PROJECT_NAMESPACE
+    JF_GIT_REPO: $CI_PROJECT_NAME
+    JF_GIT_API_ENDPOINT: $CI_API_V4_URL
+    JF_GIT_PULL_REQUEST_ID: $CI_MERGE_REQUEST_IID
+  script:
+    - |
+      curl -fLg "https://releases.jfrog.io/artifactory/frogbot/v2/[RELEASE]/getFrogbot.sh" | sh
+      ./frogbot $FROGBOT_CMD
+
+# Scans pull requests automatically
+frogbot-pr:
+  extends: .frogbot-base
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+  variables:
+    FROGBOT_CMD: "scan-pull-request"
+    JF_GIT_BASE_BRANCH: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME
+
+# Scans repository on main branch pushes and scheduled scans
+frogbot-repo:
+  extends: .frogbot-base
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  variables:
+    FROGBOT_CMD: "scan-repository"
+    JF_GIT_BASE_BRANCH: $CI_COMMIT_BRANCH
