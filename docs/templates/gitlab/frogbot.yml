@@ -7,14 +7,13 @@
 #   include:
 #     - remote: 'https://raw.githubusercontent.com/eyalk007/frogbot/add-git-providers-actions/docs/templates/gitlab/frogbot.yml'
 #
-# Option A: If your GitLab CI/CD Variables are named exactly JF_URL, JF_ACCESS_TOKEN, JF_GIT_TOKEN
-#   → You're done! No variables section needed.
+# That's it! Just 2 lines.
 #
-# Option B: If you want to use custom variable names, map them:
+# Optional - If you want to use custom variable names instead of JF_URL, JF_ACCESS_TOKEN, JF_GIT_TOKEN:
 #   variables:
-#     JF_URL: $MY_JFROG_URL
-#     JF_ACCESS_TOKEN: $MY_TOKEN
-#     JF_GIT_TOKEN: $MY_GITLAB_TOKEN
+#     JF_URL: $MY_CUSTOM_JFROG_URL
+#     JF_ACCESS_TOKEN: $MY_CUSTOM_TOKEN
+#     JF_GIT_TOKEN: $MY_CUSTOM_GITLAB_TOKEN
 #
 # This will:
 #   - Scan pull requests automatically when opened/updated
@@ -104,6 +103,10 @@ frogbot-pr:
   rules:
     - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
   variables:
+    # Required from GitLab CI/CD Variables (auto-passed through)
+    JF_URL: $JF_URL
+    JF_ACCESS_TOKEN: $JF_ACCESS_TOKEN
+    JF_GIT_TOKEN: $JF_GIT_TOKEN
     # Auto-configured from GitLab CI variables
     JF_GIT_PROVIDER: "gitlab"
     JF_GIT_OWNER: $CI_PROJECT_NAMESPACE
@@ -124,6 +127,10 @@ frogbot-repo:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_PIPELINE_SOURCE == "schedule"
   variables:
+    # Required from GitLab CI/CD Variables (auto-passed through)
+    JF_URL: $JF_URL
+    JF_ACCESS_TOKEN: $JF_ACCESS_TOKEN
+    JF_GIT_TOKEN: $JF_GIT_TOKEN
     # Auto-configured from GitLab CI variables
     JF_GIT_PROVIDER: "gitlab"
     JF_GIT_OWNER: $CI_PROJECT_NAMESPACE
