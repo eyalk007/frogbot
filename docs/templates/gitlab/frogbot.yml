@@ -3,11 +3,6 @@
 #   include:
 #     - remote: 'https://raw.githubusercontent.com/eyalk007/frogbot/add-git-providers-actions/docs/templates/gitlab/frogbot.yml'
 #
-#   variables:
-#     JF_URL: $JF_URL
-#     JF_ACCESS_TOKEN: $JF_ACCESS_TOKEN
-#     JF_GIT_TOKEN: $JF_GIT_TOKEN
-#
 # That's it! This will:
 #   - Scan pull requests automatically when opened/updated
 #   - Scan main branch on every push
@@ -67,6 +62,11 @@
 .frogbot-base:
   image: releases-docker.jfrog.io/jfrog-ecosystem-integration-env
   variables:
+    # User must set these in GitLab CI/CD Variables (they auto-pass through)
+    JF_URL: $JF_URL
+    JF_ACCESS_TOKEN: $JF_ACCESS_TOKEN
+    JF_GIT_TOKEN: $JF_GIT_TOKEN
+    
     # Auto-configured from GitLab CI variables
     JF_GIT_PROVIDER: "gitlab"
     JF_GIT_OWNER: $CI_PROJECT_NAMESPACE
