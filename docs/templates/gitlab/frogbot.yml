@@ -52,11 +52,25 @@
 #     rules:
 #       - when: never
 #
-#   # Scan different branch or disable schedule:
+#   # Scan a different single branch:
 #   frogbot-repo:
 #     rules:
-#       - if: $CI_COMMIT_BRANCH == "develop"  # Scan develop instead of main
-#       # Remove schedule line to disable scheduled scans
+#       - if: $CI_COMMIT_BRANCH == "develop"
+#       - if: $CI_PIPELINE_SOURCE == "schedule"
+#
+#   # Scan multiple branches:
+#   frogbot-repo:
+#     rules:
+#       - if: $CI_COMMIT_BRANCH == "main"
+#       - if: $CI_COMMIT_BRANCH == "develop"
+#       - if: $CI_COMMIT_BRANCH == "staging"
+#       - if: $CI_PIPELINE_SOURCE == "schedule"
+#
+#   # Scan branches matching a pattern:
+#   frogbot-repo:
+#     rules:
+#       - if: $CI_COMMIT_BRANCH =~ /^(main|develop|release-.*)$/
+#       - if: $CI_PIPELINE_SOURCE == "schedule"
 #
 #   # Disable repository scans completely:
 #   frogbot-repo:
@@ -65,15 +79,30 @@
 #
 #   # Note: Configure scheduled scans in GitLab UI (CI/CD → Schedules)
 #
-# Optional - Use custom Docker image (applies to both PR and repo scans):
-#   .frogbot-base:
-#     image: my-registry/my-custom-image:tag
+# Optional - Use custom Docker image:
+#   frogbot-pr:
+#     image: my-company/custom-image:tag
+#   frogbot-repo:
+#     image: my-company/custom-image:tag
+#
+# Advanced - Extend company-wide base job (for enterprise with 1000+ repos):
+#   .company-base:  # Your existing company-wide template
+#     image: company/image
+#     tags: [company-runner]
+#     before_script: [company-setup]
+#
+#   frogbot-pr:
+#     extends: .company-base  # Now you can extend your own base!
+#   frogbot-repo:
+#     extends: .company-base
 #
 
 
-# Base configuration
-.frogbot-base:
+# Scans pull requests automatically
+frogbot-pr:
   image: releases-docker.jfrog.io/jfrog-ecosystem-integration-env
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
   variables:
     # Auto-configured from GitLab CI variables
     JF_GIT_PROVIDER: "gitlab"
@@ -81,30 +110,29 @@
     JF_GIT_REPO: $CI_PROJECT_NAME
     JF_GIT_API_ENDPOINT: $CI_API_V4_URL
     JF_GIT_PULL_REQUEST_ID: $CI_MERGE_REQUEST_IID
-    # Required: JF_URL, JF_ACCESS_TOKEN, JF_GIT_TOKEN
-    # These can come from:
-    # 1. GitLab CI/CD Variables (if named exactly JF_URL, JF_ACCESS_TOKEN, JF_GIT_TOKEN)
-    # 2. User's variables section in .gitlab-ci.yml (if they want custom names)
+    JF_GIT_BASE_BRANCH: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME
+    FROGBOT_CMD: "scan-pull-request"
   script:
     - |
       curl -fLg "https://releases.jfrog.io/artifactory/frogbot/v2/[RELEASE]/getFrogbot.sh" | sh
       ./frogbot $FROGBOT_CMD
 
-# Scans pull requests automatically
-frogbot-pr:
-  extends: .frogbot-base
-  rules:
-    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
-  variables:
-    FROGBOT_CMD: "scan-pull-request"
-    JF_GIT_BASE_BRANCH: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME
-
 # Scans repository on main branch pushes and scheduled scans
 frogbot-repo:
-  extends: .frogbot-base
+  image: releases-docker.jfrog.io/jfrog-ecosystem-integration-env
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_PIPELINE_SOURCE == "schedule"
   variables:
-    FROGBOT_CMD: "scan-repository"
+    # Auto-configured from GitLab CI variables
+    JF_GIT_PROVIDER: "gitlab"
+    JF_GIT_OWNER: $CI_PROJECT_NAMESPACE
+    JF_GIT_REPO: $CI_PROJECT_NAME
+    JF_GIT_API_ENDPOINT: $CI_API_V4_URL
+    JF_GIT_PULL_REQUEST_ID: $CI_MERGE_REQUEST_IID
     JF_GIT_BASE_BRANCH: $CI_COMMIT_BRANCH
+    FROGBOT_CMD: "scan-repository"
+  script:
+    - |
+      curl -fLg "https://releases.jfrog.io/artifactory/frogbot/v2/[RELEASE]/getFrogbot.sh" | sh
+      ./frogbot $FROGBOT_CMD
