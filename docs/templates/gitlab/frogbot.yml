@@ -62,17 +62,14 @@
 .frogbot-base:
   image: releases-docker.jfrog.io/jfrog-ecosystem-integration-env
   variables:
-    # User must set these in GitLab CI/CD Variables (they auto-pass through)
-    JF_URL: $JF_URL
-    JF_ACCESS_TOKEN: $JF_ACCESS_TOKEN
-    JF_GIT_TOKEN: $JF_GIT_TOKEN
-    
     # Auto-configured from GitLab CI variables
     JF_GIT_PROVIDER: "gitlab"
     JF_GIT_OWNER: $CI_PROJECT_NAMESPACE
     JF_GIT_REPO: $CI_PROJECT_NAME
     JF_GIT_API_ENDPOINT: $CI_API_V4_URL
     JF_GIT_PULL_REQUEST_ID: $CI_MERGE_REQUEST_IID
+    # Note: JF_URL, JF_ACCESS_TOKEN, JF_GIT_TOKEN are automatically available
+    # from GitLab CI/CD Variables - no need to redeclare them
   script:
     - |
       curl -fLg "https://releases.jfrog.io/artifactory/frogbot/v2/[RELEASE]/getFrogbot.sh" | sh
