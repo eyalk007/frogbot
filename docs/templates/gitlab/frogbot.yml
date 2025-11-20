@@ -1,9 +1,22 @@
 # Frogbot Security Scan - GitLab Template
 #
+# ============================================================================
+# MINIMAL SETUP - Add to your .gitlab-ci.yml:
+# ============================================================================
+#
 #   include:
 #     - remote: 'https://raw.githubusercontent.com/eyalk007/frogbot/add-git-providers-actions/docs/templates/gitlab/frogbot.yml'
 #
-# That's it! This will:
+# Option A: If your GitLab CI/CD Variables are named exactly JF_URL, JF_ACCESS_TOKEN, JF_GIT_TOKEN
+#   → You're done! No variables section needed.
+#
+# Option B: If you want to use custom variable names, map them:
+#   variables:
+#     JF_URL: $MY_JFROG_URL
+#     JF_ACCESS_TOKEN: $MY_TOKEN
+#     JF_GIT_TOKEN: $MY_GITLAB_TOKEN
+#
+# This will:
 #   - Scan pull requests automatically when opened/updated
 #   - Scan main branch on every push
 #   - Scan on scheduled pipelines (configure schedule in GitLab UI: CI/CD → Schedules)
@@ -68,8 +81,10 @@
     JF_GIT_REPO: $CI_PROJECT_NAME
     JF_GIT_API_ENDPOINT: $CI_API_V4_URL
     JF_GIT_PULL_REQUEST_ID: $CI_MERGE_REQUEST_IID
-    # Note: JF_URL, JF_ACCESS_TOKEN, JF_GIT_TOKEN are automatically available
-    # from GitLab CI/CD Variables - no need to redeclare them
+    # Required: JF_URL, JF_ACCESS_TOKEN, JF_GIT_TOKEN
+    # These can come from:
+    # 1. GitLab CI/CD Variables (if named exactly JF_URL, JF_ACCESS_TOKEN, JF_GIT_TOKEN)
+    # 2. User's variables section in .gitlab-ci.yml (if they want custom names)
   script:
     - |
       curl -fLg "https://releases.jfrog.io/artifactory/frogbot/v2/[RELEASE]/getFrogbot.sh" | sh
