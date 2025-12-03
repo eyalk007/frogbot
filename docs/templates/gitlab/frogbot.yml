@@ -1,9 +1,5 @@
 # Frogbot Security Scan - GitLab Template
 #
-# ============================================================================
-# MINIMAL SETUP - Add to your .gitlab-ci.yml:
-# ============================================================================
-#
 #   include:
 #     - remote: 'https://raw.githubusercontent.com/eyalk007/frogbot/add-git-providers-actions/docs/templates/gitlab/frogbot.yml'
 #
@@ -25,8 +21,6 @@
 #   - JF_ACCESS_TOKEN
 #   - JF_GIT_TOKEN
 #
-# Note: This template uses Docker and works on Ubuntu, Windows, and macOS runners
-#       with Docker executor (the default for GitLab.com and most self-hosted setups)
 #
 # Optional - Add custom Frogbot configuration:
 #   variables:
@@ -84,7 +78,7 @@
 #   frogbot-repo:
 #     image: my-company/custom-image:tag
 #
-# Advanced - Extend company-wide base job (for enterprise with 1000+ repos):
+# Advanced - Extend company-wide base job
 #   .company-base:  # Your existing company-wide template
 #     image: company/image
 #     tags: [company-runner]
@@ -95,7 +89,19 @@
 #   frogbot-repo:
 #     extends: .company-base
 #
-
+# Advanced - Scan multiple repositories in parallel:
+#   # This is useful if you have a monorepo or want to scan related repos together
+#   scan-multiple-repos:
+#     parallel:
+#       matrix:
+#         - REPO: ['repo1', 'repo2', 'repo3']
+#           OWNER: ['org1', 'org1', 'org2']
+#     extends: frogbot-repo
+#     variables:
+#       JF_GIT_REPO: $REPO
+#       JF_GIT_OWNER: $OWNER
+#
+#
 
 # Scans pull requests automatically
 frogbot-pr:

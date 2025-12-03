@@ -27,6 +27,7 @@
 #     JF_URL: $(JF_URL)
 #     JF_ACCESS_TOKEN: $(JF_ACCESS_TOKEN)
 #     JF_GIT_TOKEN: $(System.AccessToken)
+#     JF_GIT_OWNER: "your-organization-name"
 #
 #   jobs:
 #     - template: docs/templates/azure/frogbot.yml@templates
@@ -36,9 +37,10 @@
 #   - Scan main branch on every push
 #   - Scan daily at midnight (customize cron schedule as needed)
 #
-# Set these 2 variables in Azure Pipelines (Pipelines → Edit → Variables):
+# Set these variables in Azure Pipelines (Pipelines → Edit → Variables):
 #   - JF_URL (your JFrog instance URL)
 #   - JF_ACCESS_TOKEN (mark as secret)
+#   - JF_GIT_OWNER (your Azure DevOps organization name)
 #
 # Note: Uses ubuntu-latest by default. Works on Windows, macOS, and Linux runners
 #
@@ -65,6 +67,43 @@
 # Optional - Customize triggers (remove PR scans, change branches, adjust schedule):
 #   # Modify trigger/pr/schedules sections in your azure-pipelines.yml
 #   # See: https://learn.microsoft.com/azure/devops/pipelines/yaml-schema
+#
+# Advanced - Scan multiple repositories in parallel:
+#   # Option 1: Call template multiple times (runs in parallel)
+#   jobs:
+#     - template: docs/templates/azure/frogbot.yml@templates
+#       parameters:
+#         variables:
+#           JF_GIT_REPO: 'repo1'
+#     - template: docs/templates/azure/frogbot.yml@templates
+#       parameters:
+#         variables:
+#           JF_GIT_REPO: 'repo2'
+#     - template: docs/templates/azure/frogbot.yml@templates
+#       parameters:
+#         variables:
+#           JF_GIT_REPO: 'repo3'
+#
+#   # Option 2: Use matrix strategy
+#   jobs:
+#     - job: ScanRepos
+#       strategy:
+#         matrix:
+#           repo1:
+#             REPO_NAME: 'repo1'
+#             MIN_SEVERITY: 'high'
+#           repo2:
+#             REPO_NAME: 'repo2'
+#             FIXABLE_ONLY: 'TRUE'
+#           repo3:
+#             REPO_NAME: 'repo3'
+#       steps:
+#         - template: docs/templates/azure/frogbot.yml@templates
+#           parameters:
+#             variables:
+#               JF_GIT_REPO: $(REPO_NAME)
+#
+#   # All jobs run in parallel automatically!
 
 
 parameters:
@@ -77,30 +116,30 @@ jobs:
   - job: FrogbotScan
     displayName: 'Frogbot Security Scan'
     pool: ${{ parameters.pool }}
-    
+
     steps:
       - checkout: self
         persistCredentials: true
-      
+
       - task: CmdLine@2
         displayName: 'Run Frogbot Security Scan'
         env:
           # Required - set these in your pipeline variables
           JF_URL: $(JF_URL)
           JF_ACCESS_TOKEN: $(JF_ACCESS_TOKEN)
-          JF_GIT_TOKEN: $(JF_GIT_TOKEN)
-          
+          JF_GIT_OWNER: $(JF_GIT_OWNER)
+
           # Auto-configured from Azure DevOps
           JF_GIT_PROVIDER: 'azureRepos'
-          JF_GIT_OWNER: $(System.TeamProject)
           JF_GIT_PROJECT: $(System.TeamProject)
           JF_GIT_REPO: $(Build.Repository.Name)
           JF_GIT_API_ENDPOINT: $(System.CollectionUri)
-          
+          JF_GIT_TOKEN: $(System.AccessToken)
+
           # Auto-detect PR vs Repo scan
           JF_GIT_BASE_BRANCH: $(if eq(variables['Build.Reason'], 'PullRequest'), variables['System.PullRequest.TargetBranchName'], variables['Build.SourceBranchName'])
           JF_GIT_PULL_REQUEST_ID: $(System.PullRequest.PullRequestId)
-          
+
           # Note: Any variables you define in your pipeline (like JF_MIN_SEVERITY, JF_WATCHES, etc.)
           # will automatically be available to Frogbot
         inputs:
