@@ -38,14 +38,13 @@ const (
 	JfrogConfigProfileEnv    = "JF_CONFIG_PROFILE"
 
 	// Git environment variables
-	GitProvider                      = "JF_GIT_PROVIDER"
-	GitRepoOwnerEnv                  = "JF_GIT_OWNER"
-	GitRepoEnv                       = "JF_GIT_REPO"
-	GitProjectEnv                    = "JF_GIT_PROJECT"
-	GitUsernameEnv                   = "JF_GIT_USERNAME"
-	GitUseLocalRepositoryEnv         = "JF_USE_LOCAL_REPOSITORY"
-	UseMostCommonAncestorAsTargetEnv = "JF_USE_MOST_COMMON_ANCESTOR_AS_TARGET"
-	GitDependencyGraphSubmissionEnv  = "JF_UPLOAD_SBOM_TO_VCS"
+	GitProvider                     = "JF_GIT_PROVIDER"
+	GitRepoOwnerEnv                 = "JF_GIT_OWNER"
+	GitRepoEnv                      = "JF_GIT_REPO"
+	GitProjectEnv                   = "JF_GIT_PROJECT"
+	GitUsernameEnv                  = "JF_GIT_USERNAME"
+	GitUseLocalRepositoryEnv        = "JF_USE_LOCAL_REPOSITORY"
+	GitDependencyGraphSubmissionEnv = "JF_UPLOAD_SBOM_TO_VCS"
 
 	// Git naming template environment variables
 	BranchNameTemplateEnv       = "JF_BRANCH_NAME_TEMPLATE"
@@ -77,16 +76,8 @@ const (
 	DisableJasEnv                      = "JF_DISABLE_ADVANCED_SECURITY"
 	DetectionOnlyEnv                   = "JF_SKIP_AUTOFIX"
 	AllowedLicensesEnv                 = "JF_ALLOWED_LICENSES"
-	SkipAutoInstallEnv                 = "JF_SKIP_AUTO_INSTALL"
 	AllowPartialResultsEnv             = "JF_ALLOW_PARTIAL_RESULTS"
 	WatchesDelimiter                   = ","
-
-	// Email related environment variables
-	//#nosec G101 -- False positive - no hardcoded credentials.
-	SmtpPasswordEnv   = "JF_SMTP_PASSWORD"
-	SmtpUserEnv       = "JF_SMTP_USER"
-	SmtpServerEnv     = "JF_SMTP_SERVER"
-	EmailReceiversEnv = "JF_EMAIL_RECEIVERS"
 
 	//#nosec G101 -- False positive - no hardcoded credentials.
 	GitTokenEnv          = "JF_GIT_TOKEN"
@@ -95,9 +86,6 @@ const (
 	GitApiEndpointEnv    = "JF_GIT_API_ENDPOINT"
 	GitAggregateFixesEnv = "JF_GIT_AGGREGATE_FIXES"
 	GitEmailAuthorEnv    = "JF_GIT_EMAIL_AUTHOR"
-
-	// Product ID for usage reporting
-	productId = "frogbot"
 
 	// The 'GITHUB_ACTIONS' environment variable exists when the CI is GitHub Actions
 	GitHubActionsEnv = "GITHUB_ACTIONS"

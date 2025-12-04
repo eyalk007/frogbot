@@ -14,12 +14,12 @@ import (
 	"github.com/jfrog/froggit-go/vcsclient"
 	"github.com/jfrog/froggit-go/vcsutils"
 	"github.com/jfrog/jfrog-cli-security/utils/formats"
+	"github.com/jfrog/jfrog-cli-security/utils/formats/violationutils"
 	"github.com/jfrog/jfrog-cli-security/utils/jasutils"
 	"github.com/jfrog/jfrog-cli-security/utils/results"
 	"github.com/jfrog/jfrog-cli-security/utils/results/conversion"
 	"github.com/jfrog/jfrog-cli-security/utils/xsc"
 	"github.com/jfrog/jfrog-client-go/utils/log"
-	"github.com/owenrumney/go-sarif/v3/pkg/report/v210/sarif"
 )
 
 const (
@@ -104,15 +104,6 @@ func scanPullRequest(repo *utils.Repository, client vcsclient.VcsClient) (err er
 		return
 	}
 
-	// Output results
-	shouldSendExposedSecretsEmail := issues.SecretsIssuesExists() && repo.SmtpServer != ""
-	if shouldSendExposedSecretsEmail {
-		secretsEmailDetails := utils.NewSecretsEmailDetails(client, repo, append(issues.SecretsVulnerabilities, issues.SecretsViolations...))
-		if err = utils.AlertSecretsExposed(secretsEmailDetails); err != nil {
-			return
-		}
-	}
-
 	// Handle PR comments for scan output
 	if err = utils.HandlePullRequestCommentsAfterScan(issues, resultContext, repo, client, int(pullRequestDetails.ID)); err != nil {
 		return
@@ -184,7 +175,6 @@ func createBaseScanDetails(repoConfig *utils.Repository, client vcsclient.VcsCli
 		SetResultsContext(repositoryCloneUrl, repoConfig.Watches, repoConfig.JFrogProjectKey, repoConfig.IncludeVulnerabilities, len(repoConfig.AllowedLicenses) > 0).
 		SetFixableOnly(repoConfig.FixableOnly).
 		SetConfigProfile(repoConfig.ConfigProfile).
-		SetSkipAutoInstall(repoConfig.SkipAutoInstall).
 		SetDisableJas(repoConfig.DisableJas).
 		SetXscPRGitInfoContext(repoConfig.Project, client, repoConfig.PullRequestDetails).
 		SetDiffScan(!repoConfig.IncludeAllVulnerabilities).
@@ -211,7 +201,8 @@ func prepareSourceCodeForScan(repoConfig *utils.Repository, scanDetails *utils.S
 		log.Info("Frogbot is configured to show all issues at source branch")
 		return
 	}
-	if targetBranchWd, cleanupTarget, err = prepareTargetForScan(repoConfig.Git, scanDetails); err != nil {
+	target := repoConfig.Git.PullRequestDetails.Target
+	if targetBranchWd, cleanupTarget, err = utils.DownloadRepoToTempDir(scanDetails.Client(), target.Owner, target.Repository, target.Name); err != nil {
 		err = fmt.Errorf("failed to download target branch code. Error: %s", err.Error())
 		return
 	}
@@ -278,7 +269,7 @@ func auditPullRequestSourceCode(repoConfig *utils.Repository, scanDetails *utils
 	}
 
 	// Convert to issues
-	if issues, e := scanResultsToIssuesCollection(scanResults, repoConfig.AllowedLicenses, workingDirs...); e == nil {
+	if issues, e := scanResultsToIssuesCollection(scanResults, workingDirs...); e == nil {
 		issuesCollection = issues
 		return
 	} else {
@@ -308,109 +299,92 @@ func filterOutFailedScansIfAllowPartialResultsEnabled(targetResults, sourceResul
 		targetResult := targetResults.Targets[idx]
 		sourceResult := sourceResults.Targets[idx]
 
-		filterOutScaResultsIfScanFailed(targetResult, sourceResult)
-		filterJasResultsIfScanFailed(targetResult, sourceResult, jasutils.Applicability)
-		filterJasResultsIfScanFailed(targetResult, sourceResult, jasutils.Secrets)
-		filterJasResultsIfScanFailed(targetResult, sourceResult, jasutils.IaC)
-		filterJasResultsIfScanFailed(targetResult, sourceResult, jasutils.Sast)
+		filterOutScaResultsIfScanFailed(targetResult, sourceResult, sourceResults.Violations)
+		filterJasResultsIfScanFailed(targetResult, sourceResult, results.CmdStepContextualAnalysis)
+		filterJasResultsIfScanFailed(targetResult, sourceResult, results.CmdStepSecrets)
+		filterJasResultsIfScanFailed(targetResult, sourceResult, results.CmdStepIaC)
+		filterJasResultsIfScanFailed(targetResult, sourceResult, results.CmdStepSast)
 	}
 	return nil
 }
 
-func filterJasResultsIfScanFailed(targetResult, sourceResult *results.TargetResults, scanType jasutils.JasScanType) {
-	switch scanType {
-	case jasutils.Applicability:
-		if isJasScanFailedInSourceOrTarget(sourceResult.JasResults.ApplicabilityScanResults, targetResult.JasResults.ApplicabilityScanResults) {
-			log.Debug(fmt.Sprintf(vulnerabilitiesFilteringErrorMessage, scanType.String()))
+func filterJasResultsIfScanFailed(targetResult, sourceResult *results.TargetResults, cmdStep results.SecurityCommandStep) {
+	sourceResults := []*results.TargetResults{sourceResult}
+	targetResults := []*results.TargetResults{targetResult}
+	switch cmdStep {
+	case results.CmdStepContextualAnalysis:
+		if isScanFailedInSourceOrTarget(sourceResults, targetResults, cmdStep) {
+			log.Debug(fmt.Sprintf(vulnerabilitiesFilteringErrorMessage, cmdStep))
 			sourceResult.JasResults.ApplicabilityScanResults = nil
 		}
-	case jasutils.Secrets:
-		if isJasScanFailedInSourceOrTarget(sourceResult.JasResults.JasVulnerabilities.SecretsScanResults, targetResult.JasResults.JasVulnerabilities.SecretsScanResults) {
-			log.Debug(fmt.Sprintf(vulnerabilitiesFilteringErrorMessage, scanType.String()))
+	case results.CmdStepSecrets:
+		if isScanFailedInSourceOrTarget(sourceResults, targetResults, cmdStep) {
+			log.Debug(fmt.Sprintf(vulnerabilitiesFilteringErrorMessage, cmdStep))
 			sourceResult.JasResults.JasVulnerabilities.SecretsScanResults = nil
 		}
-
-		if (sourceResult.JasResults.JasViolations.SecretsScanResults != nil || targetResult.JasResults.JasViolations.SecretsScanResults != nil) && isJasScanFailedInSourceOrTarget(sourceResult.JasResults.JasViolations.SecretsScanResults, targetResult.JasResults.JasViolations.SecretsScanResults) {
-			log.Debug(fmt.Sprintf(violationsFilteringErrorMessage, scanType.String()))
+		if (sourceResult.JasResults.JasViolations.SecretsScanResults != nil || targetResult.JasResults.JasViolations.SecretsScanResults != nil) &&
+			isScanFailedInSourceOrTarget(sourceResults, targetResults, cmdStep) {
+			log.Debug(fmt.Sprintf(violationsFilteringErrorMessage, cmdStep))
 			sourceResult.JasResults.JasViolations.SecretsScanResults = nil
 		}
-	case jasutils.IaC:
-		if isJasScanFailedInSourceOrTarget(sourceResult.JasResults.JasVulnerabilities.IacScanResults, targetResult.JasResults.JasVulnerabilities.IacScanResults) {
-			log.Debug(fmt.Sprintf(vulnerabilitiesFilteringErrorMessage, scanType.String()))
+	case results.CmdStepIaC:
+		if isScanFailedInSourceOrTarget(sourceResults, targetResults, cmdStep) {
+			log.Debug(fmt.Sprintf(vulnerabilitiesFilteringErrorMessage, cmdStep))
 			sourceResult.JasResults.JasVulnerabilities.IacScanResults = nil
 		}
 
-		if (sourceResult.JasResults.JasViolations.IacScanResults != nil || targetResult.JasResults.JasViolations.IacScanResults != nil) && isJasScanFailedInSourceOrTarget(sourceResult.JasResults.JasViolations.IacScanResults, targetResult.JasResults.JasViolations.IacScanResults) {
-			log.Debug(fmt.Sprintf(violationsFilteringErrorMessage, scanType.String()))
+		if (sourceResult.JasResults.JasViolations.IacScanResults != nil || targetResult.JasResults.JasViolations.IacScanResults != nil) && isScanFailedInSourceOrTarget(sourceResults, targetResults, cmdStep) {
+			log.Debug(fmt.Sprintf(violationsFilteringErrorMessage, cmdStep))
 			sourceResult.JasResults.JasViolations.IacScanResults = nil
 		}
-	case jasutils.Sast:
-		if isJasScanFailedInSourceOrTarget(sourceResult.JasResults.JasVulnerabilities.SastScanResults, targetResult.JasResults.JasVulnerabilities.SastScanResults) {
-			log.Debug(fmt.Sprintf(vulnerabilitiesFilteringErrorMessage, scanType.String()))
+	case results.CmdStepSast:
+		if isScanFailedInSourceOrTarget(sourceResults, targetResults, cmdStep) {
+			log.Debug(fmt.Sprintf(vulnerabilitiesFilteringErrorMessage, cmdStep))
 			sourceResult.JasResults.JasVulnerabilities.SastScanResults = nil
 		}
 
-		if (sourceResult.JasResults.JasViolations.SastScanResults != nil || targetResult.JasResults.JasViolations.SastScanResults != nil) && isJasScanFailedInSourceOrTarget(sourceResult.JasResults.JasViolations.SastScanResults, targetResult.JasResults.JasViolations.SastScanResults) {
-			log.Debug(fmt.Sprintf(violationsFilteringErrorMessage, scanType.String()))
+		if (sourceResult.JasResults.JasViolations.SastScanResults != nil || targetResult.JasResults.JasViolations.SastScanResults != nil) && isScanFailedInSourceOrTarget(sourceResults, targetResults, cmdStep) {
+			log.Debug(fmt.Sprintf(violationsFilteringErrorMessage, cmdStep))
 			sourceResult.JasResults.JasViolations.SastScanResults = nil
 		}
 	}
 }
 
-func isJasScanFailedInSourceOrTarget(sourceResults, targetResults []results.ScanResult[[]*sarif.Run]) bool {
+func isScanFailedInSourceOrTarget(sourceResults, targetResults []*results.TargetResults, step results.SecurityCommandStep) bool {
 	for _, scanResult := range sourceResults {
-		if scanResult.StatusCode != 0 {
+		if scanResult.ResultsStatus.IsScanFailed(step) {
 			return true
 		}
 	}
 
 	for _, scanResult := range targetResults {
-		if scanResult.StatusCode != 0 {
+		if scanResult.ResultsStatus.IsScanFailed(step) {
 			return true
 		}
 	}
 	return false
 }
 
-func filterOutScaResultsIfScanFailed(targetResult, sourceResult *results.TargetResults) {
+func filterOutScaResultsIfScanFailed(targetResult, sourceResult *results.TargetResults, sourceViolations *violationutils.Violations) {
 	// Filter out new Sca results
-	if sourceResult.ScaResults.ScanStatusCode != 0 || targetResult.ScaResults.ScanStatusCode != 0 {
-		var statusCode int
+	if sourceResult.ResultsStatus.IsScanFailed(results.CmdStepSca) || targetResult.ResultsStatus.IsScanFailed(results.CmdStepSca) {
+		var statusCode *int
 		var errorSource string
-		if sourceResult.ScaResults.ScanStatusCode != 0 {
-			statusCode = sourceResult.ScaResults.ScanStatusCode
+		if sourceResult.ResultsStatus.IsScanFailed(results.CmdStepSca) {
+			statusCode = sourceResult.ResultsStatus.ScaScanStatusCode
 			errorSource = "source"
 		} else {
-			statusCode = targetResult.ScaResults.ScanStatusCode
+			statusCode = targetResult.ResultsStatus.ScaScanStatusCode
 			errorSource = "target"
 		}
 		log.Debug(fmt.Sprintf("Sca scan on %s code has completed with errors (status %d). Sca vulnerability results will be removed from final report", errorSource, statusCode))
 		sourceResult.ScaResults.Sbom = nil
-		if sourceResult.ScaResults.Violations != nil {
+		if sourceViolations != nil && sourceViolations.Sca != nil {
 			log.Debug(fmt.Sprintf("Sca scan on %s has completed with errors (status %d). Sca violations results will be removed from final report", errorSource, statusCode))
-			sourceResult.ScaResults.Violations = nil
+			sourceViolations.Sca = nil
 		}
 	}
 
-	// Note: Although we have a slice on ScanResults in DeprecatedXrayResults, in fact there is only a single entry
-	hasScaFailure := false
-	for _, deprecatedScaResult := range targetResult.ScaResults.DeprecatedXrayResults {
-		if deprecatedScaResult.StatusCode != 0 {
-			hasScaFailure = true
-			break
-		}
-	}
-	for _, deprecatedScaResult := range sourceResult.ScaResults.DeprecatedXrayResults {
-		if deprecatedScaResult.StatusCode != 0 {
-			hasScaFailure = true
-			break
-		}
-	}
-	if hasScaFailure {
-		log.Debug("Sca scan has completed with errors. Sca vulnerabilities and violations results will be removed from final report")
-		// Violations are being filtered as well as they are included in the DeprecatedXrayResults
-		sourceResult.ScaResults.DeprecatedXrayResults = nil
-	}
 }
 
 // Sorts the Targets slice in both targetResults and sourceResults
@@ -434,11 +408,10 @@ func sortTargetsByPhysicalLocation(targetResults, sourceResults *results.Securit
 	return nil
 }
 
-func scanResultsToIssuesCollection(scanResults *results.SecurityCommandResults, allowedLicenses []string, workingDirs ...string) (issuesCollection *issues.ScansIssuesCollection, err error) {
+func scanResultsToIssuesCollection(scanResults *results.SecurityCommandResults, workingDirs ...string) (issuesCollection *issues.ScansIssuesCollection, err error) {
 	simpleJsonResults, err := conversion.NewCommandResultsConvertor(conversion.ResultConvertParams{
 		IncludeVulnerabilities: scanResults.IncludesVulnerabilities(),
 		HasViolationContext:    scanResults.HasViolationContext(),
-		AllowedLicenses:        allowedLicenses,
 		IncludeLicenses:        true,
 		SimplifiedOutput:       true,
 	}).ConvertToSimpleJson(scanResults)
@@ -478,56 +451,6 @@ func getResultScanStatues(cmdResults ...*results.SecurityCommandResults) formats
 		}
 	}
 	return getScanStatus(converted...)
-}
-
-func prepareTargetForScan(gitDetails utils.Git, scanDetails *utils.ScanDetails) (targetBranchWd string, cleanupTarget func() error, err error) {
-	target := gitDetails.PullRequestDetails.Target
-	// Download target branch
-	if targetBranchWd, cleanupTarget, err = utils.DownloadRepoToTempDir(scanDetails.Client(), target.Owner, target.Repository, target.Name); err != nil {
-		return
-	}
-	if scanDetails.Git.UseMostCommonAncestorAsTarget == nil || !*scanDetails.Git.UseMostCommonAncestorAsTarget {
-		return
-	}
-	log.Debug("Using most common ancestor commit as target branch commit")
-
-	// Get common parent commit between source and target and use it (checkout) to the target branch commit
-	repoCloneUrl, err := scanDetails.GetRepositoryHttpsCloneUrl(scanDetails.Client())
-	if err != nil {
-		return
-	}
-	if e := tryCheckoutToMostCommonAncestor(scanDetails, gitDetails.PullRequestDetails.Source.Name, target.Name, targetBranchWd, repoCloneUrl); e != nil {
-		log.Warn(fmt.Sprintf("Failed to get best common ancestor commit between source branch: %s and target branch: %s, defaulting to target branch commit. Error: %s", gitDetails.PullRequestDetails.Source.Name, target.Name, e.Error()))
-	}
-	return
-}
-
-func tryCheckoutToMostCommonAncestor(scanDetails *utils.ScanDetails, baseBranch, headBranch, targetBranchWd, cloneRepoUrl string) (err error) {
-	// Change working directory to the temp target branch directory
-	cwd, err := os.Getwd()
-	if err != nil {
-		return
-	}
-	if err = os.Chdir(targetBranchWd); err != nil {
-		return
-	}
-	defer func() {
-		err = errors.Join(err, os.Chdir(cwd))
-	}()
-	// Create a new git manager and fetch
-	gitManager, err := utils.NewGitManager().SetAuth(scanDetails.Username, scanDetails.Token).SetRemoteGitUrl(cloneRepoUrl)
-	if err != nil {
-		return
-	}
-	if err = gitManager.Fetch(); err != nil {
-		return
-	}
-	// Get the most common ancestor commit hash
-	bestAncestorHash, err := gitManager.GetMostCommonAncestorHash(baseBranch, headBranch)
-	if err != nil {
-		return
-	}
-	return gitManager.CheckoutToHash(bestAncestorHash)
 }
 
 func getScanStatus(cmdResults ...formats.SimpleJsonResults) formats.ScanStatus {

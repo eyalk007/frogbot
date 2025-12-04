@@ -19,9 +19,10 @@ import (
 	"github.com/jfrog/jfrog-client-go/xsc/services"
 	"golang.org/x/exp/slices"
 
-	"github.com/jfrog/frogbot/v2/utils/outputwriter"
 	securityutils "github.com/jfrog/jfrog-cli-security/utils"
 	"github.com/jfrog/jfrog-cli-security/utils/severityutils"
+
+	"github.com/jfrog/frogbot/v2/utils/outputwriter"
 
 	"github.com/jfrog/build-info-go/utils"
 	"github.com/jfrog/froggit-go/vcsclient"
@@ -95,7 +96,6 @@ type Project struct {
 	DepsRepo            string   `yaml:"repository,omitempty"`
 	InstallCommandName  string
 	InstallCommandArgs  []string
-	IsRecursiveScan     bool
 }
 
 func (p *Project) setDefaultsIfNeeded() error {
@@ -106,7 +106,6 @@ func (p *Project) setDefaultsIfNeeded() error {
 			// If no working directories are provided, and none exist in the environment variable, we designate the project's root directory as our sole working directory.
 			// We then execute a recursive scan across the entire project, commencing from the root.
 			workingDir = RootDir
-			p.IsRecursiveScan = true
 			p.WorkingDirs = append(p.WorkingDirs, workingDir)
 		} else {
 			workingDirs := strings.Split(workingDir, ",")
@@ -170,45 +169,9 @@ type Scan struct {
 	AddPrCommentOnSuccess           bool      `yaml:"addPrCommentOnSuccess,omitempty"`
 	AllowedLicenses                 []string  `yaml:"allowedLicenses,omitempty"`
 	Projects                        []Project `yaml:"projects,omitempty"`
-	EmailDetails                    `yaml:",inline"`
 	ConfigProfile                   *services.ConfigProfile
 	SkipAutoInstall                 bool
 	AllowPartialResults             bool
-}
-
-type EmailDetails struct {
-	SmtpServer     string
-	SmtpPort       string
-	SmtpUser       string
-	SmtpPassword   string
-	EmailReceivers []string `yaml:"emailReceivers,omitempty"`
-}
-
-func (s *Scan) SetEmailDetails() error {
-	smtpServerAndPort := getTrimmedEnv(SmtpServerEnv)
-	if smtpServerAndPort == "" {
-		return nil
-	}
-	splittedServerAndPort := strings.Split(smtpServerAndPort, ":")
-	if len(splittedServerAndPort) < 2 {
-		return fmt.Errorf("failed while setting your email details. Could not extract the smtp server and its port from the %s environment variable. Expected format: `smtp.server.com:port`, received: %s", SmtpServerEnv, smtpServerAndPort)
-	}
-	s.SmtpServer = splittedServerAndPort[0]
-	s.SmtpPort = splittedServerAndPort[1]
-	s.SmtpUser = getTrimmedEnv(SmtpUserEnv)
-	s.SmtpPassword = getTrimmedEnv(SmtpPasswordEnv)
-	if s.SmtpUser == "" {
-		return fmt.Errorf("failed while setting your email details. SMTP username is expected, but the %s environment variable is empty", SmtpUserEnv)
-	}
-	if s.SmtpPassword == "" {
-		return fmt.Errorf("failed while setting your email details. SMTP password is expected, but the %s environment variable is empty", SmtpPasswordEnv)
-	}
-	if len(s.EmailReceivers) == 0 {
-		if emailReceiversEnv := getTrimmedEnv(EmailReceiversEnv); emailReceiversEnv != "" {
-			s.EmailReceivers = strings.Split(emailReceiversEnv, ",")
-		}
-	}
-	return nil
 }
 
 func (s *Scan) setDefaultsIfNeeded() (err error) {
@@ -262,11 +225,6 @@ func (s *Scan) setDefaultsIfNeeded() (err error) {
 		}
 		s.MinSeverity = severity.String()
 	}
-	if !s.SkipAutoInstall {
-		if s.SkipAutoInstall, err = getBoolEnv(SkipAutoInstallEnv, false); err != nil {
-			return
-		}
-	}
 	if len(s.Projects) == 0 {
 		s.Projects = append(s.Projects, Project{})
 	}
@@ -276,7 +234,7 @@ func (s *Scan) setDefaultsIfNeeded() (err error) {
 		}
 	}
 	if !s.AllowPartialResults {
-		if s.AllowPartialResults, err = getBoolEnv(AllowPartialResultsEnv, false); err != nil {
+		if s.AllowPartialResults, err = getBoolEnv(AllowPartialResultsEnv, true); err != nil {
 			return
 		}
 	}
@@ -285,7 +243,6 @@ func (s *Scan) setDefaultsIfNeeded() (err error) {
 			return
 		}
 	}
-	err = s.SetEmailDetails()
 	return
 }
 
@@ -322,22 +279,21 @@ func (jp *JFrogPlatform) setDefaultsIfNeeded() (err error) {
 type Git struct {
 	GitProvider vcsutils.VcsProvider
 	vcsclient.VcsInfo
-	UseMostCommonAncestorAsTarget *bool `yaml:"useMostCommonAncestorAsTarget,omitempty"`
-	RepoOwner                     string
-	RepoName                      string   `yaml:"repoName,omitempty"`
-	Branches                      []string `yaml:"branches,omitempty"`
-	BranchNameTemplate            string   `yaml:"branchNameTemplate,omitempty"`
-	CommitMessageTemplate         string   `yaml:"commitMessageTemplate,omitempty"`
-	PullRequestTitleTemplate      string   `yaml:"pullRequestTitleTemplate,omitempty"`
-	PullRequestCommentTitle       string   `yaml:"pullRequestCommentTitle,omitempty"`
-	PullRequestSecretComments     bool     `yaml:"pullRequestSecretComments,omitempty"`
-	AvoidExtraMessages            bool     `yaml:"avoidExtraMessages,omitempty"`
-	EmailAuthor                   string   `yaml:"emailAuthor,omitempty"`
-	AggregateFixes                bool     `yaml:"aggregateFixes,omitempty"`
-	PullRequestDetails            vcsclient.PullRequestInfo
-	RepositoryCloneUrl            string
-	UseLocalRepository            bool
-	UploadSbomToVcs               *bool `yaml:"uploadSbomToVcs,omitempty"`
+	RepoOwner                 string
+	RepoName                  string   `yaml:"repoName,omitempty"`
+	Branches                  []string `yaml:"branches,omitempty"`
+	BranchNameTemplate        string   `yaml:"branchNameTemplate,omitempty"`
+	CommitMessageTemplate     string   `yaml:"commitMessageTemplate,omitempty"`
+	PullRequestTitleTemplate  string   `yaml:"pullRequestTitleTemplate,omitempty"`
+	PullRequestCommentTitle   string   `yaml:"pullRequestCommentTitle,omitempty"`
+	PullRequestSecretComments bool     `yaml:"pullRequestSecretComments,omitempty"`
+	AvoidExtraMessages        bool     `yaml:"avoidExtraMessages,omitempty"`
+	EmailAuthor               string   `yaml:"emailAuthor,omitempty"`
+	AggregateFixes            bool     `yaml:"aggregateFixes,omitempty"`
+	PullRequestDetails        vcsclient.PullRequestInfo
+	RepositoryCloneUrl        string
+	UseLocalRepository        bool
+	UploadSbomToVcs           *bool `yaml:"uploadSbomToVcs,omitempty"`
 }
 
 func (g *Git) GetRepositoryHttpsCloneUrl(gitClient vcsclient.VcsClient) (string, error) {
@@ -374,7 +330,7 @@ func (g *Git) setDefaultsIfNeeded(gitParamsFromEnv *Git, commandName string) (er
 			return
 		}
 	}
-	if commandName == ScanRepository || commandName == ScanMultipleRepositories {
+	if commandName == ScanRepository {
 		if err = g.extractScanRepositoryEnvParams(gitParamsFromEnv); err != nil {
 			return
 		}
@@ -404,13 +360,6 @@ func (g *Git) extractScanPullRequestEnvParams(gitParamsFromEnv *Git) (err error)
 		if g.PullRequestSecretComments, err = getBoolEnv(PullRequestSecretCommentsEnv, false); err != nil {
 			return
 		}
-	}
-	if g.UseMostCommonAncestorAsTarget == nil {
-		envValue, err := getBoolEnv(UseMostCommonAncestorAsTargetEnv, true)
-		if err != nil {
-			return err
-		}
-		g.UseMostCommonAncestorAsTarget = &envValue
 	}
 
 	g.AvoidExtraMessages, err = getBoolEnv(AvoidExtraMessages, false)
@@ -474,7 +423,7 @@ func GetFrogbotDetails(commandName string) (frogbotDetails *FrogbotDetails, err 
 		return
 	}
 
-	gitParamsFromEnv, err := extractGitParamsFromEnvs(commandName)
+	gitParamsFromEnv, err := extractGitParamsFromEnvs()
 	if err != nil {
 		return
 	}
@@ -534,7 +483,7 @@ func getConfigAggregator(xrayVersion, xscVersion string, gitClient vcsclient.Vcs
 func getConfigFileContent(gitClient vcsclient.VcsClient, gitParamsFromEnv *Git, commandName string) ([]byte, error) {
 	var errMissingConfig *ErrMissingConfig
 
-	if commandName == ScanRepository || commandName == ScanMultipleRepositories {
+	if commandName == ScanRepository {
 		configFileContent, err := ReadConfigFromFileSystem(osFrogbotConfigPath)
 		if err != nil && !errors.As(err, &errMissingConfig) {
 			return nil, err
@@ -617,7 +566,7 @@ func extractJFrogCredentialsFromEnvs() (*coreconfig.ServerDetails, error) {
 	return &server, nil
 }
 
-func extractGitParamsFromEnvs(commandName string) (*Git, error) {
+func extractGitParamsFromEnvs() (*Git, error) {
 	e := &ErrMissingEnv{}
 	var err error
 	gitEnvParams := &Git{}
@@ -653,7 +602,7 @@ func extractGitParamsFromEnvs(commandName string) (*Git, error) {
 	}
 
 	// [Mandatory] Set the repository name, except for multi repository.
-	if err = readParamFromEnv(GitRepoEnv, &gitEnvParams.RepoName); err != nil && commandName != ScanMultipleRepositories {
+	if err = readParamFromEnv(GitRepoEnv, &gitEnvParams.RepoName); err != nil {
 		return nil, err
 	}
 
