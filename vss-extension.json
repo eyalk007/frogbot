@@ -1,0 +1,58 @@
+{
+  "manifestVersion": 1,
+  "id": "frogbot-security-scan",
+  "name": "Frogbot Security Scanner",
+  "version": "1.0.0",
+  "publisher": "jfrog",
+  "targets": [
+    {
+      "id": "Microsoft.VisualStudio.Services"
+    }
+  ],
+  "description": "JFrog Frogbot is a Git bot that scans your pull requests and repositories for security vulnerabilities.",
+  "categories": [
+    "Azure Pipelines"
+  ],
+  "tags": [
+    "Security",
+    "Vulnerabilities",
+    "JFrog",
+    "Frogbot",
+    "Xray",
+    "SCA"
+  ],
+  "content": {
+    "details": {
+      "path": "overview.md"
+    }
+  },
+  "files": [
+    {
+      "path": "azure-extension"
+    },
+    {
+      "path": "images",
+      "addressable": true
+    }
+  ],
+  "contributions": [
+    {
+      "id": "frogbot-scan-task",
+      "type": "ms.vss-distributed-task.task",
+      "targets": [
+        "ms.vss-distributed-task.tasks"
+      ],
+      "properties": {
+        "name": "azure-extension"
+      }
+    }
+  ],
+  "branding": {
+    "color": "rgb(76, 175, 80)",
+    "theme": "light"
+  },
+  "icons": {
+    "default": "images/icon.png"
+  }
+}
+

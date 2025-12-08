@@ -1,0 +1,48 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Microsoft/azure-pipelines-task-lib/master/tasks.schema.json",
+  "id": "5f5e3d7c-2b4a-4c9e-8f1a-9d7e6c5b4a3f",
+  "name": "FrogbotSecurityScan",
+  "friendlyName": "Frogbot Security Scan",
+  "description": "JFrog Frogbot scans your pull requests and repositories for security vulnerabilities.",
+  "helpMarkDown": "[Learn more about Frogbot](https://docs.jfrog-applications.jfrog.io/jfrog-applications/frogbot)",
+  "category": "Utility",
+  "author": "JFrog",
+  "version": {
+    "Major": 1,
+    "Minor": 0,
+    "Patch": 0
+  },
+  "instanceNameFormat": "Frogbot Security Scan",
+  "inputs": [
+    {
+      "name": "version",
+      "type": "string",
+      "label": "Frogbot Version",
+      "defaultValue": "latest",
+      "required": false,
+      "helpMarkDown": "Frogbot version to use. Defaults to 'latest'."
+    },
+    {
+      "name": "oidcProviderName",
+      "type": "string",
+      "label": "OIDC Provider Name",
+      "defaultValue": "",
+      "required": false,
+      "helpMarkDown": "Provider Name's value that was set in OpenId Connect integration in the JFrog platform."
+    },
+    {
+      "name": "oidcAudience",
+      "type": "string",
+      "label": "OIDC Audience",
+      "defaultValue": "",
+      "required": false,
+      "helpMarkDown": "OIDC audience for token exchange."
+    }
+  ],
+  "execution": {
+    "Node16": {
+      "target": "lib/main.js"
+    }
+  }
+}
+

@@ -1,0 +1,32 @@
+{
+  "name": "frogbot-azure-extension",
+  "version": "1.0.0",
+  "description": "JFrog Frogbot Azure DevOps Extension",
+  "main": "lib/main.js",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "package": "npm run build && cd .. && tfx extension create --manifest-globs vss-extension.json"
+  },
+  "keywords": [
+    "frogbot",
+    "jfrog",
+    "security",
+    "vulnerabilities"
+  ],
+  "author": "JFrog",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "azure-pipelines-task-lib": "^4.10.0",
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/q": "^1.5.5",
+    "typescript": "^5.3.0",
+    "jest": "^29.7.0",
+    "@types/jest": "^29.5.0",
+    "ts-jest": "^29.1.0"
+  }
+}
+
