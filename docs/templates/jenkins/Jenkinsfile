@@ -1,0 +1,108 @@
+// Frogbot Security Scan - Jenkins
+// Ultra-simple configuration - just set 3 credentials and you're done!
+//
+// Setup:
+// 1. Add these credentials to Jenkins (Manage Jenkins → Credentials):
+//    - JF_URL: Secret text (https://your-jfrog-instance.jfrog.io)
+//    - JF_ACCESS_TOKEN: Secret text (your JFrog access token)
+//    - JF_GIT_TOKEN: Secret text (your Git provider token)
+//
+// 2. Create a Multibranch Pipeline or Pipeline job with this Jenkinsfile
+// 3. Configure webhooks in your Git provider to trigger builds on PR and push events
+//
+// That's it! Frogbot will automatically:
+// - Scan pull requests when they're opened/updated
+// - Scan the main branch on every push
+// - Post results as PR comments
+
+pipeline {
+    agent any
+    
+    triggers {
+        // Scan repository daily at midnight
+        cron('0 0 * * *')
+    }
+    
+    environment {
+        // Auto-configured - no need to change these!
+        JF_GIT_PROVIDER = getGitProvider()
+    }
+    
+    stages {
+        stage('Frogbot Security Scan') {
+            steps {
+                script {
+                    // Load credentials
+                    withCredentials([
+                        string(credentialsId: 'JF_URL', variable: 'JF_URL'),
+                        string(credentialsId: 'JF_ACCESS_TOKEN', variable: 'JF_ACCESS_TOKEN'),
+                        string(credentialsId: 'JF_GIT_TOKEN', variable: 'JF_GIT_TOKEN')
+                    ]) {
+                        // Determine scan type
+                        def isPR = env.CHANGE_ID != null
+                        def frogbotCmd = isPR ? 'scan-pull-request' : 'scan-repository'
+                        def baseBranch = isPR ? env.CHANGE_TARGET : env.BRANCH_NAME
+                        
+                        // Set environment variables
+                        env.FROGBOT_CMD = frogbotCmd
+                        env.JF_GIT_BASE_BRANCH = baseBranch
+                        if (isPR) {
+                            env.JF_GIT_PULL_REQUEST_ID = env.CHANGE_ID
+                        }
+                        
+                        // Auto-detect Git owner and repo
+                        def gitUrl = scm.getUserRemoteConfigs()[0].getUrl()
+                        def (owner, repo) = parseGitUrl(gitUrl)
+                        env.JF_GIT_OWNER = owner
+                        env.JF_GIT_REPO = repo
+                        
+                        // Download and run Frogbot
+                        if (isUnix()) {
+                            sh '''
+                                curl -fLg "https://releases.jfrog.io/artifactory/frogbot/v2/[RELEASE]/getFrogbot.sh" | sh
+                                ./frogbot ${FROGBOT_CMD}
+                            '''
+                        } else {
+                            bat '''
+                                powershell -Command "Invoke-WebRequest -Uri 'https://releases.jfrog.io/artifactory/frogbot/v2/[RELEASE]/getFrogbot.sh' -UseBasicParsing | ForEach-Object { & $_.Content }"
+                                .\\frogbot %FROGBOT_CMD%
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            // Clean up
+            cleanWs()
+        }
+    }
+}
+
+// Helper function to detect Git provider
+def getGitProvider() {
+    def gitUrl = scm.getUserRemoteConfigs()[0].getUrl()
+    if (gitUrl.contains('github.com')) return 'github'
+    if (gitUrl.contains('gitlab.com') || gitUrl.contains('gitlab')) return 'gitlab'
+    if (gitUrl.contains('bitbucket.org') || gitUrl.contains('bitbucket')) return 'bitbucket'
+    if (gitUrl.contains('dev.azure.com')) return 'azure'
+    return 'github' // default
+}
+
+// Helper function to parse Git URL
+def parseGitUrl(String gitUrl) {
+    // Remove .git suffix and protocol
+    gitUrl = gitUrl.replaceAll(/\.git$/, '').replaceAll(/^.*:\/\//, '').replaceAll(/^.*@/, '')
+    
+    // Extract owner and repo
+    def parts = gitUrl.split('/')
+    if (parts.size() >= 2) {
+        return [parts[-2], parts[-1]]
+    }
+    return ['unknown', 'unknown']
+}
+
+
