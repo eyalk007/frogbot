@@ -101,6 +101,17 @@
 #       JF_GIT_REPO: $REPO
 #       JF_GIT_OWNER: $OWNER
 #
+# For air-gapped / firewalled environments:
+#   1. Download this template file from GitHub
+#   2. Upload to Artifactory (Generic repository)
+#   3. Reference from Artifactory:
+#
+#   include:
+#     - remote: 'https://mycompany.jfrog.io/artifactory/ci-templates/gitlab/frogbot.yml'
+#
+#   This works because GitLab's 'remote:' can fetch from ANY HTTPS URL.
+#   Perfect for enterprises that can't access GitHub directly!
+#
 #
 
 # Scans pull requests automatically

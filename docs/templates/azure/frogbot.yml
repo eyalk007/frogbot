@@ -68,6 +68,12 @@
 #   # Modify trigger/pr/schedules sections in your azure-pipelines.yml
 #   # See: https://learn.microsoft.com/azure/devops/pipelines/yaml-schema
 #
+# For air-gapped / firewalled environments:
+#   1. Download this template file from GitHub
+#   2. Upload to Artifactory (Generic repository) or internal Git server
+#   3. Update the 'resources' section to point to your internal copy
+#   4. For Artifactory, you can use a Git repository in Artifactory
+#
 # Advanced - Scan multiple repositories in parallel:
 #   # Option 1: Call template multiple times (runs in parallel)
 #   jobs:
