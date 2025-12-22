@@ -568,19 +568,25 @@ func (cfp *ScanRepositoryCmd) cloneRepositoryOrUseLocalAndCheckoutToBranch() (te
 // Create a vulnerabilities map - a map with 'impacted package' as a key and all the necessary information of this vulnerability as value.
 func (cfp *ScanRepositoryCmd) createVulnerabilitiesMap(scanResults *results.SecurityCommandResults) (map[string]*utils.VulnerabilityDetails, error) {
 	vulnerabilitiesMap := map[string]*utils.VulnerabilityDetails{}
+	
+	var descriptor string
+	if len(scanResults.Targets) > 0 && scanResults.Targets[0].ScaResults != nil && len(scanResults.Targets[0].ScaResults.Descriptors) > 0 {
+		descriptor = scanResults.Targets[0].ScaResults.Descriptors[0]
+	}
+	
 	simpleJsonResult, err := conversion.NewCommandResultsConvertor(conversion.ResultConvertParams{IncludeVulnerabilities: scanResults.IncludesVulnerabilities(), HasViolationContext: scanResults.HasViolationContext()}).ConvertToSimpleJson(scanResults)
 	if err != nil {
 		return nil, err
 	}
 	if len(simpleJsonResult.Vulnerabilities) > 0 {
 		for i := range simpleJsonResult.Vulnerabilities {
-			if err = cfp.addVulnerabilityToFixVersionsMap(&simpleJsonResult.Vulnerabilities[i], vulnerabilitiesMap); err != nil {
+			if err = cfp.addVulnerabilityToFixVersionsMap(&simpleJsonResult.Vulnerabilities[i], vulnerabilitiesMap, descriptor); err != nil {
 				return nil, err
 			}
 		}
 	} else if len(simpleJsonResult.SecurityViolations) > 0 {
 		for i := range simpleJsonResult.SecurityViolations {
-			if err = cfp.addVulnerabilityToFixVersionsMap(&simpleJsonResult.SecurityViolations[i], vulnerabilitiesMap); err != nil {
+			if err = cfp.addVulnerabilityToFixVersionsMap(&simpleJsonResult.SecurityViolations[i], vulnerabilitiesMap, descriptor); err != nil {
 				return nil, err
 			}
 		}
@@ -591,7 +597,7 @@ func (cfp *ScanRepositoryCmd) createVulnerabilitiesMap(scanResults *results.Secu
 	return vulnerabilitiesMap, nil
 }
 
-func (cfp *ScanRepositoryCmd) addVulnerabilityToFixVersionsMap(vulnerability *formats.VulnerabilityOrViolationRow, vulnerabilitiesMap map[string]*utils.VulnerabilityDetails) error {
+func (cfp *ScanRepositoryCmd) addVulnerabilityToFixVersionsMap(vulnerability *formats.VulnerabilityOrViolationRow, vulnerabilitiesMap map[string]*utils.VulnerabilityDetails, descriptor string) error {
 	if len(vulnerability.FixedVersions) == 0 {
 		return nil
 	}
@@ -618,6 +624,7 @@ func (cfp *ScanRepositoryCmd) addVulnerabilityToFixVersionsMap(vulnerability *fo
 		// First appearance of a version that fixes the current impacted package
 		newVulnDetails := utils.NewVulnerabilityDetails(*vulnerability, vulnFixVersion)
 		newVulnDetails.SetIsDirectDependency(isDirectDependency)
+		newVulnDetails.Descriptor = descriptor
 		vulnerabilitiesMap[vulnerability.ImpactedDependencyName] = newVulnDetails
 	}
 	// Set the fixed version array to the relevant fixed version so that only that specific fixed version will be displayed

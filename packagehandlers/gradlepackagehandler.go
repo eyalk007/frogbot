@@ -2,116 +2,84 @@ package packagehandlers
 
 import (
 	"fmt"
-	"github.com/jfrog/frogbot/v2/utils"
 	"os"
+	"os/exec"
 	"regexp"
+	"runtime"
 	"strings"
+
+	"github.com/jfrog/frogbot/v2/utils"
+	"github.com/jfrog/jfrog-cli-core/v2/utils/config"
+	"github.com/jfrog/jfrog-client-go/utils/log"
 )
 
 const (
-	groovyDescriptorFileSuffix    = "build.gradle"
-	kotlinDescriptorFileSuffix    = "build.gradle.kts"
 	apostrophes                   = "[\\\"|\\']"
 	directMapRegexpEntry          = "\\s*%s\\s*[:|=]\\s*"
 	directStringWithVersionFormat = "%s:%s:%s"
 )
 
-// Regexp pattern for "map" format dependencies
-// Example: group: "junit", name: "junit", version: "1.0.0" | group = "junit", name = "junit", version = "1.0.0"
 var directMapWithVersionRegexp = getMapRegexpEntry("group") + "," + getMapRegexpEntry("name") + "," + getMapRegexpEntry("version")
-
-var gradleDescriptorsSuffixes = []string{groovyDescriptorFileSuffix, kotlinDescriptorFileSuffix}
 
 func getMapRegexpEntry(mapEntry string) string {
 	return fmt.Sprintf(directMapRegexpEntry, mapEntry) + apostrophes + "%s" + apostrophes
 }
 
-type GradlePackageHandler struct {
-	CommonPackageHandler
+type GradlePackageUpdater struct {
+	serverDetails *config.ServerDetails
+	depsRepo      string
 }
 
-func (gph *GradlePackageHandler) UpdateDependency(vulnDetails *utils.VulnerabilityDetails) error {
-	if vulnDetails.IsDirectDependency {
-		return gph.updateDirectDependency(vulnDetails)
-	}
-
-	return &utils.ErrUnsupportedFix{
-		PackageName:  vulnDetails.ImpactedDependencyName,
-		FixedVersion: vulnDetails.SuggestedFixedVersion,
-		ErrorType:    utils.IndirectDependencyFixNotSupported,
-	}
+func (gpu *GradlePackageUpdater) SetCommonParams(serverDetails *config.ServerDetails, depsRepo string) {
+	gpu.serverDetails = serverDetails
+	gpu.depsRepo = depsRepo
 }
 
-func (gph *GradlePackageHandler) updateDirectDependency(vulnDetails *utils.VulnerabilityDetails) (err error) {
-	if !isVersionSupportedForFix(vulnDetails.ImpactedDependencyVersion) {
+func (gpu *GradlePackageUpdater) UpdateDependency(vulnDetails *utils.VulnerabilityDetails) error {
+	if !vulnDetails.IsDirectDependency {
 		return &utils.ErrUnsupportedFix{
 			PackageName:  vulnDetails.ImpactedDependencyName,
 			FixedVersion: vulnDetails.SuggestedFixedVersion,
-			ErrorType:    utils.UnsupportedForFixVulnerableVersion,
+			ErrorType:    utils.IndirectDependencyFixNotSupported,
 		}
 	}
 
-	// A gradle project may contain several descriptor files in several sub-modules. Each vulnerability may be found in each of the descriptor files.
-	// Therefore we iterate over every descriptor file for each vulnerability and try to find and fix it.
-	var descriptorFilesFullPaths []string
-	descriptorFilesFullPaths, err = gph.GetAllDescriptorFilesFullPaths(gradleDescriptorsSuffixes)
-	if err != nil {
-		return
+	if err := gpu.updateDependency(vulnDetails); err != nil {
+		return err
 	}
 
-	isAnyDescriptorFileChanged := false
-	for _, descriptorFilePath := range descriptorFilesFullPaths {
-		var isFileChanged bool
-		isFileChanged, err = gph.fixVulnerabilityIfExists(descriptorFilePath, vulnDetails)
-		if err != nil {
-			return
-		}
-		// We use logical OR to save information over all descriptor files whether there is at least one file that has been changed
-		isAnyDescriptorFileChanged = isAnyDescriptorFileChanged || isFileChanged
+	if err := gpu.updateLockfile(); err != nil {
+		log.Warn("Failed to update gradle.lockfile:", err)
 	}
-
-	if !isAnyDescriptorFileChanged {
-		err = fmt.Errorf("impacted package '%s' was not found or could not be fixed in all descriptor files", vulnDetails.ImpactedDependencyName)
-	}
-	return
+	return nil
 }
 
-// Checks if the impacted version is currently supported for fix
-func isVersionSupportedForFix(impactedVersion string) bool {
-	if strings.Contains(impactedVersion, "+") ||
-		(strings.Contains(impactedVersion, "[") || strings.Contains(impactedVersion, "(")) ||
-		strings.Contains(impactedVersion, "latest.release") {
-		return false
-	}
-	return true
-}
+func (gpu *GradlePackageUpdater) updateDependency(vulnDetails *utils.VulnerabilityDetails) error {
+	descriptorPath := vulnDetails.Descriptor
 
-// Fixes all direct occurrences of the given vulnerability in the given descriptor file, if vulnerability occurs
-func (gph *GradlePackageHandler) fixVulnerabilityIfExists(descriptorFilePath string, vulnDetails *utils.VulnerabilityDetails) (isFileChanged bool, err error) {
-	byteFileContent, err := os.ReadFile(descriptorFilePath)
+	byteFileContent, err := os.ReadFile(descriptorPath)
 	if err != nil {
-		err = fmt.Errorf("couldn't read file '%s': %s", descriptorFilePath, err.Error())
-		return
+		return fmt.Errorf("couldn't read file '%s': %s", descriptorPath, err.Error())
 	}
 	fileContent := string(byteFileContent)
 	originalFile := fileContent
 
 	depGroup, depName, err := getVulnerabilityGroupAndName(vulnDetails.ImpactedDependencyName)
 	if err != nil {
-		return
+		return err
 	}
 
-	// Fixing all vulnerable rows given in a string format. For Example: implementation "junit:junit:4.7"
 	directStringVulnerableRow := fmt.Sprintf(directStringWithVersionFormat, depGroup, depName, vulnDetails.ImpactedDependencyVersion)
 	directStringFixedRow := fmt.Sprintf(directStringWithVersionFormat, depGroup, depName, vulnDetails.SuggestedFixedVersion)
 	fileContent = strings.ReplaceAll(fileContent, directStringVulnerableRow, directStringFixedRow)
 
-	// We replace '.' characters to '\\.' since '.' in order to correctly capture '.' character using regexps
 	regexpAdjustedDepGroup := strings.ReplaceAll(depGroup, ".", "\\.")
 	regexpAdjustedDepName := strings.ReplaceAll(depName, ".", "\\.")
-	regexpAdjustedImpactedVersion := strings.ReplaceAll(vulnDetails.ImpactedDependencyVersion, ".", "\\.")
+	dynamicVersionPattern := fmt.Sprintf(`(%s:%s:)[^"'\s]+`, regexpAdjustedDepGroup, regexpAdjustedDepName)
+	dynamicVersionRegexp := regexp.MustCompile(dynamicVersionPattern)
+	fileContent = dynamicVersionRegexp.ReplaceAllString(fileContent, "${1}"+vulnDetails.SuggestedFixedVersion)
 
-	// Fixing all vulnerable rows given in a map format. For Example: implementation group: "junit", name: "junit", version: "4.7"
+	regexpAdjustedImpactedVersion := strings.ReplaceAll(vulnDetails.ImpactedDependencyVersion, ".", "\\.")
 	mapRegexpForVulnerability := fmt.Sprintf(directMapWithVersionRegexp, regexpAdjustedDepGroup, regexpAdjustedDepName, regexpAdjustedImpactedVersion)
 	regexpCompiler := regexp.MustCompile(mapRegexpForVulnerability)
 	if rowsMatches := regexpCompiler.FindAllString(fileContent, -1); rowsMatches != nil {
@@ -121,37 +89,82 @@ func (gph *GradlePackageHandler) fixVulnerabilityIfExists(descriptorFilePath str
 		}
 	}
 
-	// If there is no changes in the file we finish dealing with the current descriptor file
-	if fileContent == originalFile {
-		return
-	}
-	isFileChanged = true
+	mapDynamicPattern := fmt.Sprintf(
+		`(group\s*[:|=]\s*%s%s%s\s*,\s*name\s*[:|=]\s*%s%s%s\s*,\s*version\s*[:|=]\s*%s)[^"']+(%s)`,
+		apostrophes, regexpAdjustedDepGroup, apostrophes,
+		apostrophes, regexpAdjustedDepName, apostrophes,
+		apostrophes, apostrophes,
+	)
+	mapDynamicRegexp := regexp.MustCompile(mapDynamicPattern)
+	fileContent = mapDynamicRegexp.ReplaceAllString(fileContent, "${1}"+vulnDetails.SuggestedFixedVersion+"${2}")
 
-	err = writeUpdatedBuildFile(descriptorFilePath, fileContent)
-	return
+	if fileContent == originalFile {
+		return fmt.Errorf("impacted package '%s' was not found in %s", vulnDetails.ImpactedDependencyName, descriptorPath)
+	}
+
+	return writeUpdatedBuildFile(descriptorPath, fileContent)
 }
 
-// Returns separated 'group' and 'name' for a given vulnerability name. In addition replaces every '.' char into '\\.' since the output will be used for a regexp
-func getVulnerabilityGroupAndName(impactedDependencyName string) (depGroup string, depName string, err error) {
+func (gpu *GradlePackageUpdater) updateLockfile() error {
+	if _, err := os.Stat("gradle.lockfile"); os.IsNotExist(err) {
+		log.Debug("No gradle.lockfile found, skipping lockfile update")
+		return nil
+	}
+
+	gradleCmd, err := getGradleCommand()
+	if err != nil {
+		log.Debug(err.Error())
+		return nil
+	}
+
+	cmd := exec.Command(gradleCmd, "dependencies", "--write-locks")
+	cmd.Env = os.Environ()
+	log.Debug(fmt.Sprintf("Running '%s dependencies --write-locks'", gradleCmd))
+
+	//#nosec G204 -- False positive - the subprocess only runs after the user's approval.
+	output, err := cmd.CombinedOutput()
+	if len(output) > 0 {
+		log.Debug(fmt.Sprintf("%s output:\n%s", gradleCmd, string(output)))
+	}
+
+	if err != nil {
+		return fmt.Errorf("gradle lockfile update failed: %s\n%s", err.Error(), output)
+	}
+	log.Debug("Successfully updated gradle.lockfile")
+	return nil
+}
+
+func getGradleCommand() (string, error) {
+	var wrapper string
+	if runtime.GOOS == "windows" {
+		wrapper = "gradlew.bat"
+	} else {
+		wrapper = "./gradlew"
+	}
+
+	if _, err := os.Stat(wrapper); os.IsNotExist(err) {
+		return "", fmt.Errorf("gradle wrapper not found: %s", wrapper)
+	}
+	return wrapper, nil
+}
+
+func getVulnerabilityGroupAndName(impactedDependencyName string) (string, string, error) {
 	seperatedImpactedDepName := strings.Split(impactedDependencyName, ":")
 	if len(seperatedImpactedDepName) != 2 {
-		err = fmt.Errorf("unable to parse impacted dependency name '%s'", impactedDependencyName)
-		return
+		return "", "", fmt.Errorf("unable to parse impacted dependency name '%s'", impactedDependencyName)
 	}
-	return seperatedImpactedDepName[0], seperatedImpactedDepName[1], err
+	return seperatedImpactedDepName[0], seperatedImpactedDepName[1], nil
 }
 
-// Writes the updated content of the descriptor's file into the file
-func writeUpdatedBuildFile(filePath string, fileContent string) (err error) {
+func writeUpdatedBuildFile(filePath string, fileContent string) error {
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
-		err = fmt.Errorf("couldn't get file info for file '%s': %s", filePath, err.Error())
-		return
+		return fmt.Errorf("couldn't get file info for file '%s': %s", filePath, err.Error())
 	}
 
 	err = os.WriteFile(filePath, []byte(fileContent), fileInfo.Mode())
 	if err != nil {
-		err = fmt.Errorf("couldn't write fixes to file '%s': %q", filePath, err)
+		return fmt.Errorf("couldn't write fixes to file '%s': %q", filePath, err)
 	}
-	return
+	return nil
 }

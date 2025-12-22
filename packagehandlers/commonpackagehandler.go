@@ -39,7 +39,7 @@ func GetCompatiblePackageHandler(vulnDetails *utils.VulnerabilityDetails, detail
 	case techutils.Nuget:
 		handler = &NugetPackageHandler{}
 	case techutils.Gradle:
-		handler = &GradlePackageHandler{}
+		handler = &GradlePackageUpdater{}
 	case techutils.Pnpm:
 		handler = &PnpmPackageHandler{}
 	case techutils.Conan:

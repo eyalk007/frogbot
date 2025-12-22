@@ -146,6 +146,7 @@ func (sc *ScanDetails) RunInstallAndAudit(workDirs ...string) (auditResults *res
 		SetInstallCommandName(sc.InstallCommandName).
 		SetInstallCommandArgs(sc.InstallCommandArgs).
 		SetTechnologies(sc.GetTechFromInstallCmdIfExists()).
+		SetIsRecursiveScan(false).
 		SetAllowPartialResults(sc.allowPartialResults).
 		SetExclusions(sc.PathExclusions).
 		SetUseJas(true).
