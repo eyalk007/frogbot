@@ -6,14 +6,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/jfrog/jfrog-cli-security/sca/bom/buildinfo"
-	"github.com/jfrog/jfrog-cli-security/sca/scan/scangraph"
-
-	clientservices "github.com/jfrog/jfrog-client-go/xsc/services"
-
 	"github.com/jfrog/froggit-go/vcsclient"
 	"github.com/jfrog/jfrog-cli-core/v2/utils/config"
 	"github.com/jfrog/jfrog-cli-security/commands/audit"
+	"github.com/jfrog/jfrog-cli-security/policy/enforcer"
+	"github.com/jfrog/jfrog-cli-security/sca/bom/xrayplugin"
+	"github.com/jfrog/jfrog-cli-security/sca/scan/enrich"
 	"github.com/jfrog/jfrog-cli-security/utils/results"
 	"github.com/jfrog/jfrog-cli-security/utils/severityutils"
 	"github.com/jfrog/jfrog-client-go/utils/log"
@@ -28,11 +26,9 @@ type ScanDetails struct {
 	*config.ServerDetails
 	client              vcsclient.VcsClient
 	fixableOnly         bool
-	disableJas          bool
-	skipAutoInstall     bool
 	minSeverityFilter   severityutils.Severity
 	baseBranch          string
-	configProfile       *clientservices.ConfigProfile
+	configProfile       *xscservices.ConfigProfile
 	allowPartialResults bool
 
 	diffScan         bool
@@ -65,11 +61,6 @@ func (sc *ScanDetails) SetResultsToCompare(results *results.SecurityCommandResul
 	return sc
 }
 
-func (sc *ScanDetails) SetDisableJas(disable bool) *ScanDetails {
-	sc.disableJas = disable
-	return sc
-}
-
 func (sc *ScanDetails) SetProject(project *Project) *ScanDetails {
 	sc.Project = project
 	return sc
@@ -82,11 +73,6 @@ func (sc *ScanDetails) SetResultsContext(httpCloneUrl string, watches []string, 
 
 func (sc *ScanDetails) SetFixableOnly(fixable bool) *ScanDetails {
 	sc.fixableOnly = fixable
-	return sc
-}
-
-func (sc *ScanDetails) SetSkipAutoInstall(skipAutoInstall bool) *ScanDetails {
-	sc.skipAutoInstall = skipAutoInstall
 	return sc
 }
 
@@ -112,7 +98,7 @@ func (sc *ScanDetails) SetBaseBranch(branch string) *ScanDetails {
 	return sc
 }
 
-func (sc *ScanDetails) SetConfigProfile(configProfile *clientservices.ConfigProfile) *ScanDetails {
+func (sc *ScanDetails) SetConfigProfile(configProfile *xscservices.ConfigProfile) *ScanDetails {
 	sc.configProfile = configProfile
 	return sc
 }
@@ -127,10 +113,6 @@ func (sc *ScanDetails) BaseBranch() string {
 
 func (sc *ScanDetails) FixableOnly() bool {
 	return sc.fixableOnly
-}
-
-func (sc *ScanDetails) DisableJas() bool {
-	return sc.disableJas
 }
 
 func (sc *ScanDetails) MinSeverityFilter() severityutils.Severity {
@@ -164,16 +146,17 @@ func (sc *ScanDetails) RunInstallAndAudit(workDirs ...string) (auditResults *res
 		SetInstallCommandName(sc.InstallCommandName).
 		SetInstallCommandArgs(sc.InstallCommandArgs).
 		SetTechnologies(sc.GetTechFromInstallCmdIfExists()).
-		SetSkipAutoInstall(sc.skipAutoInstall).
 		SetAllowPartialResults(sc.allowPartialResults).
 		SetExclusions(sc.PathExclusions).
-		SetIsRecursiveScan(sc.IsRecursiveScan).
-		SetUseJas(!sc.DisableJas()).
+		SetUseJas(true).
 		SetConfigProfile(sc.configProfile)
 
 	auditParams := audit.NewAuditParams().
-		SetBomGenerator(buildinfo.NewBuildInfoBomGenerator()).
-		SetScaScanStrategy(scangraph.NewScanGraphStrategy()).
+		SetBomGenerator(xrayplugin.NewXrayLibBomGenerator()).
+		SetScaScanStrategy(enrich.NewEnrichScanStrategy()).
+		SetUploadCdxResults(!sc.diffScan || sc.ResultsToCompare != nil).
+		SetGitContext(sc.XscGitInfoContext).
+		SetRtResultRepository(frogbotUploadRtRepoPath).
 		SetWorkingDirs(workDirs).
 		SetMinSeverityFilter(sc.MinSeverityFilter()).
 		SetFixableOnly(sc.FixableOnly()).
@@ -182,7 +165,9 @@ func (sc *ScanDetails) RunInstallAndAudit(workDirs ...string) (auditResults *res
 		SetDiffMode(sc.diffScan).
 		SetResultsToCompare(sc.ResultsToCompare).
 		SetMultiScanId(sc.MultiScanId).
-		SetStartTime(sc.StartTime)
+		SetThreads(MaxConcurrentScanners).
+		SetStartTime(sc.StartTime).
+		SetViolationGenerator(enforcer.NewPolicyEnforcerViolationGenerator())
 
 	return audit.RunAudit(auditParams)
 }

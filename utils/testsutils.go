@@ -147,17 +147,6 @@ func CreateDotGitWithCommit(t *testing.T, wd, port string, repositoriesPath ...s
 	}
 }
 
-func CreateTempJfrogHomeWithCallback(t *testing.T) (string, func()) {
-	newJfrogHomeDir, err := fileutils.CreateTempDir()
-	assert.NoError(t, err)
-	prevJfrogHomeDir := os.Getenv(JfrogHomeDirEnv)
-	assert.NoError(t, os.Setenv(JfrogHomeDirEnv, newJfrogHomeDir))
-	return newJfrogHomeDir, func() {
-		assert.NoError(t, os.Setenv(JfrogHomeDirEnv, prevJfrogHomeDir))
-		assert.NoError(t, fileutils.RemoveTempDir(newJfrogHomeDir))
-	}
-}
-
 func CreateXscMockServerForConfigProfile(t *testing.T, xrayVersion string) (mockServer *httptest.Server, serverDetails *config.ServerDetails) {
 	mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		apiUrlPart := "api/v1/"
@@ -217,7 +206,7 @@ func CreateXscMockServerForConfigProfile(t *testing.T, xrayVersion string) (mock
 			assert.NoError(t, err)
 
 		case r.RequestURI == fmt.Sprintf("/%s/%ssystem/version", apiUrlPart, "xsc"):
-			_, err := w.Write([]byte(fmt.Sprintf(`{"xsc_version": "%s"}`, services.ConfigProfileMinXscVersion)))
+			_, err := fmt.Fprintf(w, `{"xsc_version": "%s"}`, services.ConfigProfileMinXscVersion)
 			assert.NoError(t, err)
 		default:
 			assert.Fail(t, "received an unexpected request")

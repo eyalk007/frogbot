@@ -182,39 +182,6 @@ func (gm *GitManager) Fetch() error {
 	return nil
 }
 
-func (gm *GitManager) GetMostCommonAncestorHash(baseBranch, targetBranch string) (string, error) {
-	// Get the commit of the base branch
-	baseCommitHash, err := gm.localGitRepository.ResolveRevision(plumbing.Revision(fmt.Sprintf("%s/%s", gm.remoteName, baseBranch)))
-	if err != nil {
-		return "", err
-	}
-	baseCommit, err := gm.localGitRepository.CommitObject(*baseCommitHash)
-	if err != nil {
-		return "", err
-	}
-	// Get the HEAD commit of the target branch
-	headCommitHash, err := gm.localGitRepository.ResolveRevision(plumbing.Revision(fmt.Sprintf("%s/%s", gm.remoteName, targetBranch)))
-	if err != nil {
-		return "", err
-	}
-	headCommit, err := gm.localGitRepository.CommitObject(*headCommitHash)
-	if err != nil {
-		return "", err
-	}
-	// Get the most common ancestor
-	log.Debug(fmt.Sprintf("Finding common ancestor between %s and %s...", baseBranch, targetBranch))
-	ancestorCommit, err := baseCommit.MergeBase(headCommit)
-	if err != nil {
-		return "", err
-	}
-	if len(ancestorCommit) == 0 {
-		return "", fmt.Errorf("no common ancestor found for %s and %s", baseBranch, targetBranch)
-	} else if len(ancestorCommit) > 1 {
-		return "", fmt.Errorf("more than one common ancestor found for %s and %s", baseBranch, targetBranch)
-	}
-	return ancestorCommit[0].Hash.String(), nil
-}
-
 func (gm *GitManager) Clone(destinationPath, branchName string) error {
 	if gm.dryRun {
 		// "Clone" the repository from the testdata folder
@@ -529,12 +496,16 @@ func (gm *GitManager) getPullRequestTitleTemplate(tech []techutils.Technology) s
 
 // GenerateAggregatedFixBranchName Generating a consistent branch name to enable branch updates
 // and to ensure that there is only one Frogbot aggregate pull request from each base branch scanned.
-func (gm *GitManager) GenerateAggregatedFixBranchName(baseBranch string, tech []techutils.Technology) (fixBranchName string) {
+func (gm *GitManager) GenerateAggregatedFixBranchName(baseBranch string, tech []techutils.Technology) (fixBranchName string, err error) {
 	branchFormat := gm.customTemplates.branchNameTemplate
 	if branchFormat == "" {
 		branchFormat = AggregatedBranchNameTemplate
 	}
-	return formatStringWithPlaceHolders(branchFormat, "", "", techArrayToString(tech, fixBranchTechSeparator), baseBranch, false)
+	hash, err := Md5Hash("frogbot", baseBranch, techArrayToString(tech, fixBranchTechSeparator))
+	if err != nil {
+		return "", err
+	}
+	return formatStringWithPlaceHolders(branchFormat, "", "", hash, baseBranch, false), nil
 }
 
 // dryRunClone clones an existing repository from our testdata folder into the destination folder for testing purposes.

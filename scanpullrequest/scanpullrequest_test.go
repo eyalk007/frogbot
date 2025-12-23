@@ -14,8 +14,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang/mock/gomock"
+	"github.com/jfrog/frogbot/v2/testdata"
+	securityutils "github.com/jfrog/jfrog-cli-security/utils"
+	"github.com/jfrog/jfrog-cli-security/utils/formats/sarifutils"
+	"github.com/jfrog/jfrog-cli-security/utils/formats/violationutils"
 	"github.com/jfrog/jfrog-cli-security/utils/jasutils"
+	"github.com/jfrog/jfrog-cli-security/utils/severityutils"
 	"github.com/jfrog/jfrog-cli-security/utils/xsc"
+	"github.com/jfrog/jfrog-client-go/xray/services"
 	"github.com/owenrumney/go-sarif/v3/pkg/report/v210/sarif"
 
 	"github.com/jfrog/frogbot/v2/utils"
@@ -24,71 +31,83 @@ import (
 	"github.com/jfrog/froggit-go/vcsclient"
 	"github.com/jfrog/froggit-go/vcsutils"
 	coreconfig "github.com/jfrog/jfrog-cli-core/v2/utils/config"
-	"github.com/jfrog/jfrog-cli-security/tests/validations"
 	"github.com/jfrog/jfrog-cli-security/utils/formats"
-	"github.com/jfrog/jfrog-cli-security/utils/formats/sarifutils"
 	"github.com/jfrog/jfrog-cli-security/utils/results"
-	"github.com/jfrog/jfrog-cli-security/utils/severityutils"
 	"github.com/jfrog/jfrog-client-go/utils/io/fileutils"
 	"github.com/jfrog/jfrog-client-go/utils/log"
-	"github.com/jfrog/jfrog-client-go/xray/services"
 	"github.com/stretchr/testify/assert"
 )
 
+//go:generate go run github.com/golang/mock/mockgen@v1.6.0 -destination=../testdata/vcsclientmock.go -package=testdata github.com/jfrog/froggit-go/vcsclient VcsClient
+
+var gitParams = &utils.Repository{
+	OutputWriter: &outputwriter.SimplifiedOutput{},
+	Params: utils.Params{
+		Git: utils.Git{
+			RepoOwner: "repo-owner",
+			Branches:  []string{"master"},
+			RepoName:  "repo-name",
+		},
+	},
+}
+
 const (
-	testMultiDirProjConfigPath       = "testdata/config/frogbot-config-multi-dir-test-proj.yml"
-	testMultiDirProjConfigPathNoFail = "testdata/config/frogbot-config-multi-dir-test-proj-no-fail.yml"
-	testProjSubdirConfigPath         = "testdata/config/frogbot-config-test-proj-subdir.yml"
-	testCleanProjConfigPath          = "testdata/config/frogbot-config-clean-test-proj.yml"
-	testProjConfigPath               = "testdata/config/frogbot-config-test-proj.yml"
-	testProjConfigPathNoFail         = "testdata/config/frogbot-config-test-proj-no-fail.yml"
-	testJasProjConfigPath            = "testdata/config/frogbot-config-jas-diff-proj.yml"
-	testSourceBranchName             = "pr"
-	testTargetBranchName             = "master"
+	testSourceBranchName = "pr"
+	testTargetBranchName = "master"
 )
 
+func CreateMockVcsClient(t *testing.T) *testdata.MockVcsClient {
+	return testdata.NewMockVcsClient(gomock.NewController(t))
+}
+
 func TestScanResultsToIssuesCollection(t *testing.T) {
-	allowedLicenses := []string{"MIT"}
-	auditResults := &results.SecurityCommandResults{EntitledForJas: true, ResultContext: results.ResultContext{IncludeVulnerabilities: true}, Targets: []*results.TargetResults{{
+	auditResults := &results.SecurityCommandResults{ResultsMetaData: results.ResultsMetaData{EntitledForJas: true, ResultContext: results.ResultContext{IncludeVulnerabilities: true}}, Targets: []*results.TargetResults{{
+		ResultsStatus: results.ResultsStatus{
+			ScaScanStatusCode:            securityutils.NewIntPtr(0),
+			ContextualAnalysisStatusCode: securityutils.NewIntPtr(0),
+			IacScanStatusCode:            securityutils.NewIntPtr(0),
+			SecretsScanStatusCode:        securityutils.NewIntPtr(0),
+			SastScanStatusCode:           securityutils.NewIntPtr(0),
+		},
 		ScanTarget: results.ScanTarget{Target: "dummy"},
 		ScaResults: &results.ScaScanResults{
-			DeprecatedXrayResults: validations.NewMockScaResults(services.ScanResponse{
+			DeprecatedXrayResults: []services.ScanResponse{{
 				Vulnerabilities: []services.Vulnerability{
 					{Cves: []services.Cve{{Id: "CVE-2022-2122"}}, Severity: "High", Components: map[string]services.Component{"Dep-1": {FixedVersions: []string{"1.2.3"}}}},
 					{Cves: []services.Cve{{Id: "CVE-2023-3122"}}, Severity: "Low", Components: map[string]services.Component{"Dep-2": {FixedVersions: []string{"1.2.2"}}}},
 				},
 				Licenses: []services.License{{Key: "Apache-2.0", Components: map[string]services.Component{"Dep-1": {FixedVersions: []string{"1.2.3"}}}}},
-			}),
+			}},
 		},
 		JasResults: &results.JasScansResults{
-			ApplicabilityScanResults: validations.NewMockJasRuns(
+			ApplicabilityScanResults: []*sarif.Run{
 				sarifutils.CreateRunWithDummyResults(
 					sarifutils.CreateDummyPassingResult("applic_CVE-2023-3122"),
 					sarifutils.CreateResultWithOneLocation("file1", 1, 10, 2, 11, "snippet", "applic_CVE-2022-2122", ""),
 				),
-			),
+			},
 			JasVulnerabilities: results.JasScanResults{
-				IacScanResults: validations.NewMockJasRuns(
+				IacScanResults: []*sarif.Run{
 					sarifutils.CreateRunWithDummyResults(
 						sarifutils.CreateResultWithLocations("Missing auto upgrade was detected", "rule", severityutils.SeverityToSarifSeverityLevel(severityutils.High).String(),
 							sarifutils.CreateLocation("file1", 1, 10, 2, 11, "aws-violation"),
 						),
 					),
-				),
-				SecretsScanResults: validations.NewMockJasRuns(
+				},
+				SecretsScanResults: []*sarif.Run{
 					sarifutils.CreateRunWithDummyResults(
 						sarifutils.CreateResultWithLocations("Secret", "rule", severityutils.SeverityToSarifSeverityLevel(severityutils.High).String(),
 							sarifutils.CreateLocation("index.js", 5, 6, 7, 8, "access token exposed"),
 						),
 					),
-				),
-				SastScanResults: validations.NewMockJasRuns(
+				},
+				SastScanResults: []*sarif.Run{
 					sarifutils.CreateRunWithDummyResults(
 						sarifutils.CreateResultWithLocations("XSS Vulnerability", "rule", severityutils.SeverityToSarifSeverityLevel(severityutils.High).String(),
 							sarifutils.CreateLocation("file1", 1, 10, 2, 11, "snippet"),
 						),
 					),
-				),
+				},
 			},
 		},
 	}}}
@@ -98,7 +117,7 @@ func TestScanResultsToIssuesCollection(t *testing.T) {
 				Applicable:    "Applicable",
 				FixedVersions: []string{"1.2.3"},
 				ImpactedDependencyDetails: formats.ImpactedDependencyDetails{
-					SeverityDetails:        formats.SeverityDetails{Severity: "High", SeverityNumValue: 21},
+					SeverityDetails:        formats.SeverityDetails{Severity: "High", SeverityNumValue: 31},
 					ImpactedDependencyName: "Dep-1",
 				},
 				Cves: []formats.CveRow{{Id: "CVE-2022-2122", Applicability: &formats.Applicability{Status: "Applicable", ScannerDescription: "rule-msg", Evidence: []formats.Evidence{{Reason: "result-msg", Location: formats.Location{File: "file1", StartLine: 1, StartColumn: 10, EndLine: 2, EndColumn: 11, Snippet: "snippet"}}}}}},
@@ -107,7 +126,7 @@ func TestScanResultsToIssuesCollection(t *testing.T) {
 				Applicable:    "Not Applicable",
 				FixedVersions: []string{"1.2.2"},
 				ImpactedDependencyDetails: formats.ImpactedDependencyDetails{
-					SeverityDetails:        formats.SeverityDetails{Severity: "Low", SeverityNumValue: 2},
+					SeverityDetails:        formats.SeverityDetails{Severity: "Low", SeverityNumValue: 3},
 					ImpactedDependencyName: "Dep-2",
 				},
 				Cves: []formats.CveRow{{Id: "CVE-2023-3122", Applicability: &formats.Applicability{Status: "Not Applicable", ScannerDescription: "rule-msg"}}},
@@ -117,7 +136,7 @@ func TestScanResultsToIssuesCollection(t *testing.T) {
 			{
 				SeverityDetails: formats.SeverityDetails{
 					Severity:         "High",
-					SeverityNumValue: 21,
+					SeverityNumValue: 31,
 				},
 				ScannerInfo: formats.ScannerInfo{
 					ScannerDescription: "rule-msg",
@@ -138,7 +157,7 @@ func TestScanResultsToIssuesCollection(t *testing.T) {
 			{
 				SeverityDetails: formats.SeverityDetails{
 					Severity:         "High",
-					SeverityNumValue: 21,
+					SeverityNumValue: 31,
 				},
 				ScannerInfo: formats.ScannerInfo{
 					ScannerDescription: "rule-msg",
@@ -159,7 +178,7 @@ func TestScanResultsToIssuesCollection(t *testing.T) {
 			{
 				SeverityDetails: formats.SeverityDetails{
 					Severity:         "High",
-					SeverityNumValue: 21,
+					SeverityNumValue: 31,
 				},
 				ScannerInfo: formats.ScannerInfo{
 					ScannerDescription: "rule-msg",
@@ -176,26 +195,9 @@ func TestScanResultsToIssuesCollection(t *testing.T) {
 				},
 			},
 		},
-		LicensesViolations: []formats.LicenseViolationRow{
-			{
-				LicenseRow: formats.LicenseRow{
-					LicenseKey: "Apache-2.0",
-					ImpactedDependencyDetails: formats.ImpactedDependencyDetails{
-						SeverityDetails: formats.SeverityDetails{
-							Severity:         "Medium",
-							SeverityNumValue: 14,
-						},
-						ImpactedDependencyName: "Dep-1",
-					},
-				},
-				ViolationContext: formats.ViolationContext{
-					Watch: "jfrog_custom_license_violation",
-				},
-			},
-		},
 	}
 
-	issuesRows, err := scanResultsToIssuesCollection(auditResults, allowedLicenses)
+	issuesRows, err := scanResultsToIssuesCollection(auditResults)
 
 	if assert.NoError(t, err) {
 		assert.ElementsMatch(t, expectedOutput.ScaVulnerabilities, issuesRows.ScaVulnerabilities)
@@ -208,67 +210,49 @@ func TestScanResultsToIssuesCollection(t *testing.T) {
 
 func TestScanPullRequest(t *testing.T) {
 	tests := []struct {
-		testName             string
-		configPath           string
-		projectName          string
-		failOnSecurityIssues bool
+		testName    string
+		projectName string
 	}{
 		{
-			testName:             "ScanPullRequest",
-			configPath:           testProjConfigPath,
-			projectName:          "test-proj",
-			failOnSecurityIssues: true,
+			testName:    "ScanPullRequest",
+			projectName: "test-proj",
 		},
 		{
-			testName:             "ScanPullRequestNoFail",
-			configPath:           testProjConfigPathNoFail,
-			projectName:          "test-proj",
-			failOnSecurityIssues: false,
+			testName:    "ScanPullRequestNoFail",
+			projectName: "test-proj",
 		},
 		{
-			testName:             "ScanPullRequestSubdir",
-			configPath:           testProjSubdirConfigPath,
-			projectName:          "test-proj-subdir",
-			failOnSecurityIssues: true,
+			testName:    "ScanPullRequestSubdir",
+			projectName: "test-proj-subdir",
 		},
 		{
-			testName:             "ScanPullRequestNoIssues",
-			configPath:           testCleanProjConfigPath,
-			projectName:          "clean-test-proj",
-			failOnSecurityIssues: false,
+			testName:    "ScanPullRequestNoIssues",
+			projectName: "clean-test-proj",
 		},
 		{
-			testName:             "ScanPullRequestMultiWorkDir",
-			configPath:           testMultiDirProjConfigPathNoFail,
-			projectName:          "multi-dir-test-proj",
-			failOnSecurityIssues: false,
+			testName:    "ScanPullRequestMultiWorkDir",
+			projectName: "multi-dir-test-proj",
 		},
 		{
-			testName:             "ScanPullRequestMultiWorkDirNoFail",
-			configPath:           testMultiDirProjConfigPath,
-			projectName:          "multi-dir-test-proj",
-			failOnSecurityIssues: true,
+			testName:    "ScanPullRequestMultiWorkDirNoFail",
+			projectName: "multi-dir-test-proj",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.testName, func(t *testing.T) {
-			testScanPullRequest(t, test.configPath, test.projectName, test.failOnSecurityIssues)
+			testScanPullRequest(t, test.projectName)
 		})
 	}
 }
 
-func testScanPullRequest(t *testing.T, configPath, projectName string, failOnSecurityIssues bool) {
-	configAggregator, client, cleanUp := preparePullRequestTest(t, projectName, configPath)
+func testScanPullRequest(t *testing.T, projectName string) {
+	config, client, cleanUp := preparePullRequestTest(t, projectName)
 	defer cleanUp()
 
 	// Run "frogbot scan pull request"
 	var scanPullRequest ScanPullRequestCmd
-	err := scanPullRequest.Run(configAggregator, client, utils.MockHasConnection())
-	if failOnSecurityIssues {
-		assert.EqualErrorf(t, err, SecurityIssueFoundErr, "Error should be: %v, got: %v", SecurityIssueFoundErr, err)
-	} else {
-		assert.NoError(t, err)
-	}
+	err := scanPullRequest.Run(config, client, utils.MockHasConnection())
+	assert.NoError(t, err)
 
 	// Check env sanitize
 	err = utils.SanitizeEnv()
@@ -331,10 +315,11 @@ func TestVerifyGitHubFrogbotEnvironmentOnPrem(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func prepareConfigAndClient(t *testing.T, xrayVersion, xscVersion, configPath string, server *httptest.Server, serverParams coreconfig.ServerDetails, gitServerParams GitServerParams) (utils.RepoAggregator, vcsclient.VcsClient) {
+func prepareConfigAndClient(t *testing.T, xrayVersion, xscVersion string, server *httptest.Server, serverParams coreconfig.ServerDetails, gitServerParams GitServerParams) (utils.Repository, vcsclient.VcsClient) {
 	gitTestParams := &utils.Git{
 		GitProvider: vcsutils.GitHub,
 		RepoOwner:   gitServerParams.RepoOwner,
+		RepoName:    gitServerParams.RepoName,
 		VcsInfo: vcsclient.VcsInfo{
 			Token:       "123456",
 			APIEndpoint: server.URL,
@@ -346,12 +331,10 @@ func prepareConfigAndClient(t *testing.T, xrayVersion, xscVersion, configPath st
 	client, err := vcsclient.NewClientBuilder(vcsutils.GitLab).ApiEndpoint(server.URL).Token("123456").Build()
 	assert.NoError(t, err)
 
-	configData, err := utils.ReadConfigFromFileSystem(configPath)
-	assert.NoError(t, err)
-	configAggregator, err := utils.BuildRepoAggregator(xrayVersion, xscVersion, client, configData, gitTestParams, &serverParams, utils.ScanPullRequest)
+	config, err := utils.BuildRepository(xrayVersion, xscVersion, client, gitTestParams, &serverParams, utils.ScanPullRequest)
 	assert.NoError(t, err)
 
-	return configAggregator, client
+	return config, client
 }
 
 func TestDeletePreviousPullRequestMessages(t *testing.T) {
@@ -474,13 +457,11 @@ func TestAuditDiffInPullRequest(t *testing.T) {
 	tests := []struct {
 		testName       string
 		projectName    string
-		configPath     string
 		expectedIssues TestResult
 	}{
 		{
 			testName:    "Project with Jas issues (issues added removed and not changed)",
 			projectName: "jas-diff-proj",
-			configPath:  testJasProjConfigPath,
 			expectedIssues: TestResult{
 				Sca:  4,
 				Sast: 1,
@@ -490,11 +471,10 @@ func TestAuditDiffInPullRequest(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.testName, func(t *testing.T) {
-			repoConfig, client, cleanUpTest := preparePullRequestTest(t, test.projectName, test.configPath)
+			repoConfig, client, cleanUpTest := preparePullRequestTest(t, test.projectName)
 			defer cleanUpTest()
 
-			assert.Len(t, repoConfig, 1)
-			issuesCollection, _, err := auditPullRequestAndReport(&repoConfig[0], client)
+			issuesCollection, _, err := auditPullRequestAndReport(&repoConfig, client)
 			assert.NoError(t, err)
 			assert.NotNil(t, issuesCollection)
 			assert.Len(t, issuesCollection.IacVulnerabilities, test.expectedIssues.Iac)
@@ -513,7 +493,7 @@ func TestToFailTaskStatus(t *testing.T) {
 		failureExpected  bool
 	}{
 		{
-			name:        "fail flag set to false and no violations with fail_pr",
+			name:        "no violations with fail_pr",
 			setFailFlag: false,
 			issuesCollection: issues.ScansIssuesCollection{
 				LicensesViolations: []formats.LicenseViolationRow{{
@@ -540,74 +520,7 @@ func TestToFailTaskStatus(t *testing.T) {
 			failureExpected: false,
 		},
 		{
-			name:        "fail flag set to true, sca vulnerability",
-			setFailFlag: true,
-			issuesCollection: issues.ScansIssuesCollection{
-				ScaVulnerabilities: []formats.VulnerabilityOrViolationRow{
-					{
-						ImpactedDependencyDetails: formats.ImpactedDependencyDetails{
-							ImpactedDependencyName:    "impacted-name",
-							ImpactedDependencyVersion: "1.0.0",
-							SeverityDetails:           formats.SeverityDetails{Severity: "High"},
-							Components: []formats.ComponentRow{
-								{
-									Name:    "vuln-pack-name1",
-									Version: "1.0.0",
-								},
-								{
-									Name:    "vuln-pack-name1",
-									Version: "1.2.3",
-								},
-								{
-									Name:    "vuln-pack-name2",
-									Version: "1.2.3",
-								},
-							},
-						},
-						Cves: []formats.CveRow{{
-							Id: "CVE-2021-1234",
-							Applicability: &formats.Applicability{
-								Status:             "Applicable",
-								ScannerDescription: "scanner",
-								Evidence: []formats.Evidence{
-									{Reason: "reason", Location: formats.Location{File: "file1", StartLine: 1, StartColumn: 2, EndLine: 3, EndColumn: 4, Snippet: "snippet1"}},
-									{Reason: "other reason", Location: formats.Location{File: "file2", StartLine: 5, StartColumn: 6, EndLine: 7, EndColumn: 8, Snippet: "snippet2"}},
-								},
-							},
-						}},
-						JfrogResearchInformation: &formats.JfrogResearchInformation{
-							Remediation: "remediation",
-						},
-						Summary:    "summary",
-						Applicable: "Applicable",
-						IssueId:    "Xray-Id",
-					},
-					{
-						ImpactedDependencyDetails: formats.ImpactedDependencyDetails{
-							ImpactedDependencyName:    "impacted-name2",
-							ImpactedDependencyVersion: "1.0.0",
-							SeverityDetails:           formats.SeverityDetails{Severity: "Low"},
-							Components: []formats.ComponentRow{
-								{
-									Name:    "vuln-pack-name3",
-									Version: "1.0.0",
-								},
-							},
-						},
-						Cves: []formats.CveRow{{
-							Id:            "CVE-1111-2222",
-							Applicability: &formats.Applicability{Status: "Not Applicable"},
-						}},
-						Summary:    "other summary",
-						Applicable: "Not Applicable",
-						IssueId:    "Xray-Id2",
-					},
-				},
-			},
-			failureExpected: true,
-		},
-		{
-			name:        "fail flag is set to false, fail_pr in licenses violation",
+			name:        "fail_pr in licenses violation",
 			setFailFlag: false,
 			issuesCollection: issues.ScansIssuesCollection{
 				LicensesViolations: []formats.LicenseViolationRow{{
@@ -637,19 +550,7 @@ func TestToFailTaskStatus(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			failFlag := test.setFailFlag
-			repo := &utils.Repository{
-				Params: utils.Params{
-					Scan: utils.Scan{
-						FailOnSecurityIssues: &failFlag,
-					},
-					Git: utils.Git{
-						PullRequestSecretComments: false,
-					},
-				},
-			}
-
-			assert.Equal(t, test.failureExpected, toFailTaskStatus(repo, &test.issuesCollection))
+			assert.Equal(t, test.failureExpected, test.issuesCollection.IsFailPrRuleApplied())
 		})
 	}
 }
@@ -666,17 +567,19 @@ func TestFilterJasResultsIfScanFailed(t *testing.T) {
 			name:     "Applicability scanner failed - should remove applicability results",
 			scanType: jasutils.Applicability,
 			targetResult: &results.TargetResults{
+				ResultsStatus: results.ResultsStatus{
+					ContextualAnalysisStatusCode: securityutils.NewIntPtr(0),
+				},
 				JasResults: &results.JasScansResults{
-					ApplicabilityScanResults: []results.ScanResult[[]*sarif.Run]{
-						{StatusCode: 0},
-					},
+					ApplicabilityScanResults: []*sarif.Run{},
 				},
 			},
 			sourceResult: &results.TargetResults{
+				ResultsStatus: results.ResultsStatus{
+					ContextualAnalysisStatusCode: securityutils.NewIntPtr(1),
+				},
 				JasResults: &results.JasScansResults{
-					ApplicabilityScanResults: []results.ScanResult[[]*sarif.Run]{
-						{StatusCode: 1},
-					},
+					ApplicabilityScanResults: []*sarif.Run{},
 				},
 			},
 			hasFailure: true,
@@ -685,30 +588,28 @@ func TestFilterJasResultsIfScanFailed(t *testing.T) {
 			name:     "Secrets scanner failed in target - should remove secrets vulnerabilities and violations",
 			scanType: jasutils.Secrets,
 			targetResult: &results.TargetResults{
+				ResultsStatus: results.ResultsStatus{
+					SecretsScanStatusCode: securityutils.NewIntPtr(1),
+				},
 				JasResults: &results.JasScansResults{
 					JasVulnerabilities: results.JasScanResults{
-						SecretsScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 1},
-						},
+						SecretsScanResults: []*sarif.Run{},
 					},
 					JasViolations: results.JasScanResults{
-						SecretsScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 1},
-						},
+						SecretsScanResults: []*sarif.Run{},
 					},
 				},
 			},
 			sourceResult: &results.TargetResults{
+				ResultsStatus: results.ResultsStatus{
+					SecretsScanStatusCode: securityutils.NewIntPtr(0),
+				},
 				JasResults: &results.JasScansResults{
 					JasVulnerabilities: results.JasScanResults{
-						SecretsScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 0},
-						},
+						SecretsScanResults: []*sarif.Run{},
 					},
 					JasViolations: results.JasScanResults{
-						SecretsScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 0},
-						},
+						SecretsScanResults: []*sarif.Run{},
 					},
 				},
 			},
@@ -718,30 +619,28 @@ func TestFilterJasResultsIfScanFailed(t *testing.T) {
 			name:     "IaC scanner failed in both source and target - should remove IaC vulnerabilities and violations",
 			scanType: jasutils.IaC,
 			targetResult: &results.TargetResults{
+				ResultsStatus: results.ResultsStatus{
+					IacScanStatusCode: securityutils.NewIntPtr(1),
+				},
 				JasResults: &results.JasScansResults{
 					JasVulnerabilities: results.JasScanResults{
-						IacScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 1},
-						},
+						IacScanResults: []*sarif.Run{},
 					},
 					JasViolations: results.JasScanResults{
-						IacScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 1},
-						},
+						IacScanResults: []*sarif.Run{},
 					},
 				},
 			},
 			sourceResult: &results.TargetResults{
+				ResultsStatus: results.ResultsStatus{
+					IacScanStatusCode: securityutils.NewIntPtr(1),
+				},
 				JasResults: &results.JasScansResults{
 					JasVulnerabilities: results.JasScanResults{
-						IacScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 1},
-						},
+						IacScanResults: []*sarif.Run{},
 					},
 					JasViolations: results.JasScanResults{
-						IacScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 1},
-						},
+						IacScanResults: []*sarif.Run{},
 					},
 				},
 			},
@@ -751,30 +650,28 @@ func TestFilterJasResultsIfScanFailed(t *testing.T) {
 			name:     "SAST scanner failed - should remove SAST vulnerabilities and violations",
 			scanType: jasutils.Sast,
 			targetResult: &results.TargetResults{
+				ResultsStatus: results.ResultsStatus{
+					SastScanStatusCode: securityutils.NewIntPtr(0),
+				},
 				JasResults: &results.JasScansResults{
 					JasVulnerabilities: results.JasScanResults{
-						SastScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 0},
-						},
+						SastScanResults: []*sarif.Run{},
 					},
 					JasViolations: results.JasScanResults{
-						SastScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 0},
-						},
+						SastScanResults: []*sarif.Run{},
 					},
 				},
 			},
 			sourceResult: &results.TargetResults{
+				ResultsStatus: results.ResultsStatus{
+					SastScanStatusCode: securityutils.NewIntPtr(1),
+				},
 				JasResults: &results.JasScansResults{
 					JasVulnerabilities: results.JasScanResults{
-						SastScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 1},
-						},
+						SastScanResults: []*sarif.Run{},
 					},
 					JasViolations: results.JasScanResults{
-						SastScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 1},
-						},
+						SastScanResults: []*sarif.Run{},
 					},
 				},
 			},
@@ -785,59 +682,31 @@ func TestFilterJasResultsIfScanFailed(t *testing.T) {
 			scanType: jasutils.Applicability,
 			targetResult: &results.TargetResults{
 				JasResults: &results.JasScansResults{
-					ApplicabilityScanResults: []results.ScanResult[[]*sarif.Run]{
-						{StatusCode: 0},
-					},
+					ApplicabilityScanResults: []*sarif.Run{},
 					JasVulnerabilities: results.JasScanResults{
-						SecretsScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 0},
-						},
-						IacScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 0},
-						},
-						SastScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 0},
-						},
+						SecretsScanResults: []*sarif.Run{},
+						IacScanResults:     []*sarif.Run{},
+						SastScanResults:    []*sarif.Run{},
 					},
 					JasViolations: results.JasScanResults{
-						SecretsScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 0},
-						},
-						IacScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 0},
-						},
-						SastScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 0},
-						},
+						SecretsScanResults: []*sarif.Run{},
+						IacScanResults:     []*sarif.Run{},
+						SastScanResults:    []*sarif.Run{},
 					},
 				},
 			},
 			sourceResult: &results.TargetResults{
 				JasResults: &results.JasScansResults{
-					ApplicabilityScanResults: []results.ScanResult[[]*sarif.Run]{
-						{StatusCode: 0},
-					},
+					ApplicabilityScanResults: []*sarif.Run{},
 					JasVulnerabilities: results.JasScanResults{
-						SecretsScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 0},
-						},
-						IacScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 0},
-						},
-						SastScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 0},
-						},
+						SecretsScanResults: []*sarif.Run{},
+						IacScanResults:     []*sarif.Run{},
+						SastScanResults:    []*sarif.Run{},
 					},
 					JasViolations: results.JasScanResults{
-						SecretsScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 0},
-						},
-						IacScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 0},
-						},
-						SastScanResults: []results.ScanResult[[]*sarif.Run]{
-							{StatusCode: 0},
-						},
+						SecretsScanResults: []*sarif.Run{},
+						IacScanResults:     []*sarif.Run{},
+						SastScanResults:    []*sarif.Run{},
 					},
 				},
 			},
@@ -848,7 +717,7 @@ func TestFilterJasResultsIfScanFailed(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			// Call the function under test
-			filterJasResultsIfScanFailed(test.targetResult, test.sourceResult, test.scanType)
+			filterJasResultsIfScanFailed(test.targetResult, test.sourceResult, results.SecurityCommandStep(test.scanType))
 
 			// Validate the results based on scan type and test case
 			if !test.hasFailure {
@@ -885,40 +754,38 @@ func TestFilterOutScaResultsIfScanFailed(t *testing.T) {
 		name         string
 		targetResult *results.TargetResults
 		sourceResult *results.TargetResults
+		violations   *violationutils.Violations
 		hasFailure   bool
 	}{
 		{
 			name: "SCA scan failed - should remove SCA results",
 			targetResult: &results.TargetResults{
+				ResultsStatus: results.ResultsStatus{ScaScanStatusCode: &[]int{-1}[0]},
 				ScaResults: &results.ScaScanResults{
-					ScanStatusCode: -1,
-					Sbom:           nil,
-					Violations:     []services.Violation{{IssueId: "test-violation"}},
+					Sbom: nil,
 				},
 			},
 			sourceResult: &results.TargetResults{
+				ResultsStatus: results.ResultsStatus{ScaScanStatusCode: &[]int{0}[0]},
 				ScaResults: &results.ScaScanResults{
-					ScanStatusCode: 0,
-					Sbom:           nil,
-					Violations:     []services.Violation{{IssueId: "source-violation"}},
+					Sbom: nil,
 				},
 			},
+			violations: &violationutils.Violations{},
 			hasFailure: true,
 		},
 		{
 			name: "SCA scan succeeded - should not remove SCA results",
 			targetResult: &results.TargetResults{
+				ResultsStatus: results.ResultsStatus{ScaScanStatusCode: &[]int{0}[0]},
 				ScaResults: &results.ScaScanResults{
-					ScanStatusCode: 0,
-					Sbom:           nil,
-					Violations:     []services.Violation{{IssueId: "target-violation"}},
+					Sbom: nil,
 				},
 			},
 			sourceResult: &results.TargetResults{
+				ResultsStatus: results.ResultsStatus{ScaScanStatusCode: &[]int{0}[0]},
 				ScaResults: &results.ScaScanResults{
-					ScanStatusCode: 0,
-					Sbom:           nil,
-					Violations:     []services.Violation{{IssueId: "source-violation"}},
+					Sbom: nil,
 				},
 			},
 			hasFailure: false,
@@ -927,13 +794,10 @@ func TestFilterOutScaResultsIfScanFailed(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			filterOutScaResultsIfScanFailed(test.targetResult, test.sourceResult)
+			filterOutScaResultsIfScanFailed(test.targetResult, test.sourceResult, test.violations)
 
 			if test.hasFailure {
 				assert.Nil(t, test.sourceResult.ScaResults.Sbom, "SBOM should be removed when SCA scan failed")
-				assert.Nil(t, test.sourceResult.ScaResults.Violations, "Violations should be removed when SCA scan failed")
-			} else {
-				assert.Equal(t, []services.Violation{{IssueId: "source-violation"}}, test.sourceResult.ScaResults.Violations, "Violations should NOT be removed when SCA scan succeeds")
 			}
 		})
 	}
@@ -951,36 +815,26 @@ func TestFilterOutFailedScansIfAllowPartialResultsEnabled(t *testing.T) {
 			targetResults: &results.SecurityCommandResults{
 				Targets: []*results.TargetResults{
 					{
-						ScanTarget: results.ScanTarget{Target: "test-target"},
-						ScaResults: &results.ScaScanResults{
-							ScanStatusCode: 0,
-							Violations:     []services.Violation{{IssueId: "target-violation"}},
+						ResultsStatus: results.ResultsStatus{
+							ScaScanStatusCode:            &[]int{0}[0],
+							ContextualAnalysisStatusCode: &[]int{0}[0],
+							SecretsScanStatusCode:        &[]int{0}[0],
+							IacScanStatusCode:            &[]int{0}[0],
+							SastScanStatusCode:           &[]int{0}[0],
 						},
+						ScanTarget: results.ScanTarget{Target: "test-target"},
+						ScaResults: &results.ScaScanResults{},
 						JasResults: &results.JasScansResults{
-							ApplicabilityScanResults: []results.ScanResult[[]*sarif.Run]{
-								{StatusCode: 0},
-							},
+							ApplicabilityScanResults: []*sarif.Run{},
 							JasVulnerabilities: results.JasScanResults{
-								SecretsScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 0},
-								},
-								IacScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 0},
-								},
-								SastScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 0},
-								},
+								SecretsScanResults: []*sarif.Run{},
+								IacScanResults:     []*sarif.Run{},
+								SastScanResults:    []*sarif.Run{},
 							},
 							JasViolations: results.JasScanResults{
-								SecretsScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 0},
-								},
-								IacScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 0},
-								},
-								SastScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 0},
-								},
+								SecretsScanResults: []*sarif.Run{},
+								IacScanResults:     []*sarif.Run{},
+								SastScanResults:    []*sarif.Run{},
 							},
 						},
 					},
@@ -989,36 +843,26 @@ func TestFilterOutFailedScansIfAllowPartialResultsEnabled(t *testing.T) {
 			sourceResults: &results.SecurityCommandResults{
 				Targets: []*results.TargetResults{
 					{
-						ScanTarget: results.ScanTarget{Target: "test-target"},
-						ScaResults: &results.ScaScanResults{
-							ScanStatusCode: 0,
-							Violations:     []services.Violation{{IssueId: "source-violation"}},
+						ResultsStatus: results.ResultsStatus{
+							ScaScanStatusCode:            &[]int{0}[0],
+							ContextualAnalysisStatusCode: &[]int{0}[0],
+							SecretsScanStatusCode:        &[]int{0}[0],
+							IacScanStatusCode:            &[]int{0}[0],
+							SastScanStatusCode:           &[]int{0}[0],
 						},
+						ScanTarget: results.ScanTarget{Target: "test-target"},
+						ScaResults: &results.ScaScanResults{},
 						JasResults: &results.JasScansResults{
-							ApplicabilityScanResults: []results.ScanResult[[]*sarif.Run]{
-								{StatusCode: 0},
-							},
+							ApplicabilityScanResults: []*sarif.Run{},
 							JasVulnerabilities: results.JasScanResults{
-								SecretsScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 0},
-								},
-								IacScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 0},
-								},
-								SastScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 0},
-								},
+								SecretsScanResults: []*sarif.Run{},
+								IacScanResults:     []*sarif.Run{},
+								SastScanResults:    []*sarif.Run{},
 							},
 							JasViolations: results.JasScanResults{
-								SecretsScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 0},
-								},
-								IacScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 0},
-								},
-								SastScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 0},
-								},
+								SecretsScanResults: []*sarif.Run{},
+								IacScanResults:     []*sarif.Run{},
+								SastScanResults:    []*sarif.Run{},
 							},
 						},
 					},
@@ -1031,36 +875,26 @@ func TestFilterOutFailedScansIfAllowPartialResultsEnabled(t *testing.T) {
 			targetResults: &results.SecurityCommandResults{
 				Targets: []*results.TargetResults{
 					{
-						ScanTarget: results.ScanTarget{Target: "test-target"},
-						ScaResults: &results.ScaScanResults{
-							ScanStatusCode: -1,
-							Violations:     []services.Violation{{IssueId: "target-violation"}},
+						ResultsStatus: results.ResultsStatus{
+							ScaScanStatusCode:            &[]int{-1}[0],
+							ContextualAnalysisStatusCode: &[]int{0}[0],
+							SecretsScanStatusCode:        &[]int{1}[0],
+							IacScanStatusCode:            &[]int{1}[0],
+							SastScanStatusCode:           &[]int{0}[0],
 						},
+						ScanTarget: results.ScanTarget{Target: "test-target"},
+						ScaResults: &results.ScaScanResults{},
 						JasResults: &results.JasScansResults{
-							ApplicabilityScanResults: []results.ScanResult[[]*sarif.Run]{
-								{StatusCode: 0},
-							},
+							ApplicabilityScanResults: []*sarif.Run{},
 							JasVulnerabilities: results.JasScanResults{
-								SecretsScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 1},
-								},
-								IacScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 1},
-								},
-								SastScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 0},
-								},
+								SecretsScanResults: []*sarif.Run{},
+								IacScanResults:     []*sarif.Run{},
+								SastScanResults:    []*sarif.Run{},
 							},
 							JasViolations: results.JasScanResults{
-								SecretsScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 1},
-								},
-								IacScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 1},
-								},
-								SastScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 0},
-								},
+								SecretsScanResults: []*sarif.Run{},
+								IacScanResults:     []*sarif.Run{},
+								SastScanResults:    []*sarif.Run{},
 							},
 						},
 					},
@@ -1069,36 +903,26 @@ func TestFilterOutFailedScansIfAllowPartialResultsEnabled(t *testing.T) {
 			sourceResults: &results.SecurityCommandResults{
 				Targets: []*results.TargetResults{
 					{
-						ScanTarget: results.ScanTarget{Target: "test-target"},
-						ScaResults: &results.ScaScanResults{
-							ScanStatusCode: 0,
-							Violations:     []services.Violation{{IssueId: "source-violation"}},
+						ResultsStatus: results.ResultsStatus{
+							ScaScanStatusCode:            &[]int{0}[0],
+							ContextualAnalysisStatusCode: &[]int{0}[0],
+							SecretsScanStatusCode:        &[]int{0}[0],
+							IacScanStatusCode:            &[]int{0}[0],
+							SastScanStatusCode:           &[]int{0}[0],
 						},
+						ScanTarget: results.ScanTarget{Target: "test-target"},
+						ScaResults: &results.ScaScanResults{},
 						JasResults: &results.JasScansResults{
-							ApplicabilityScanResults: []results.ScanResult[[]*sarif.Run]{
-								{StatusCode: 0},
-							},
+							ApplicabilityScanResults: []*sarif.Run{},
 							JasVulnerabilities: results.JasScanResults{
-								SecretsScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 0},
-								},
-								IacScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 0},
-								},
-								SastScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 0},
-								},
+								SecretsScanResults: []*sarif.Run{},
+								IacScanResults:     []*sarif.Run{},
+								SastScanResults:    []*sarif.Run{},
 							},
 							JasViolations: results.JasScanResults{
-								SecretsScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 0},
-								},
-								IacScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 0},
-								},
-								SastScanResults: []results.ScanResult[[]*sarif.Run]{
-									{StatusCode: 0},
-								},
+								SecretsScanResults: []*sarif.Run{},
+								IacScanResults:     []*sarif.Run{},
+								SastScanResults:    []*sarif.Run{},
 							},
 						},
 					},
@@ -1115,7 +939,6 @@ func TestFilterOutFailedScansIfAllowPartialResultsEnabled(t *testing.T) {
 
 			sourceTarget := test.sourceResults.Targets[0]
 			if test.hasFailure {
-				assert.Nil(t, sourceTarget.ScaResults.Violations, "SCA violations should be removed when SCA scan failed")
 				assert.Nil(t, sourceTarget.JasResults.JasVulnerabilities.SecretsScanResults, "Secrets scan results should be removed when Secrets scan failed")
 				assert.Nil(t, sourceTarget.JasResults.JasViolations.SecretsScanResults, "Secrets violation results should be removed when Secrets scan failed")
 				assert.Nil(t, sourceTarget.JasResults.JasVulnerabilities.IacScanResults, "IaC scan results should be removed when IaC scan failed")
@@ -1124,7 +947,6 @@ func TestFilterOutFailedScansIfAllowPartialResultsEnabled(t *testing.T) {
 				assert.NotNil(t, sourceTarget.JasResults.JasVulnerabilities.SastScanResults, "SAST scan results should NOT be removed when SAST scan succeeds")
 				assert.NotNil(t, sourceTarget.JasResults.JasViolations.SastScanResults, "SAST violation results should NOT be removed when SAST scan succeeds")
 			} else {
-				assert.NotNil(t, sourceTarget.ScaResults.Violations, "SCA violations should NOT be removed when SCA scan succeeds")
 				assert.NotNil(t, sourceTarget.JasResults.JasVulnerabilities.SecretsScanResults, "Secrets scan results should NOT be removed when Secrets scan succeeds")
 				assert.NotNil(t, sourceTarget.JasResults.JasViolations.SecretsScanResults, "Secrets violation results should NOT be removed when Secrets scan succeeds")
 				assert.NotNil(t, sourceTarget.JasResults.JasVulnerabilities.IacScanResults, "IaC scan results should NOT be removed when IaC scan succeeds")
@@ -1137,8 +959,21 @@ func TestFilterOutFailedScansIfAllowPartialResultsEnabled(t *testing.T) {
 	}
 }
 
-func preparePullRequestTest(t *testing.T, projectName, configPath string) (utils.RepoAggregator, vcsclient.VcsClient, func()) {
+func preparePullRequestTest(t *testing.T, projectName string) (utils.Repository, vcsclient.VcsClient, func()) {
 	params, restoreEnv := utils.VerifyEnv(t)
+
+	// Set test-specific environment variables
+	envVars := map[string]string{}
+
+	// Set working directories for multi-dir tests
+	if projectName == "multi-dir-test-proj" {
+		envVars[utils.WorkingDirectoryEnv] = "sub1,sub3/sub4,sub2"
+		envVars[utils.RequirementsFileEnv] = "requirements.txt"
+	}
+
+	if len(envVars) > 0 {
+		utils.SetEnvAndAssert(t, envVars)
+	}
 
 	xrayVersion, xscVersion, err := xsc.GetJfrogServicesVersion(&params)
 	assert.NoError(t, err)
@@ -1156,14 +991,14 @@ func preparePullRequestTest(t *testing.T, projectName, configPath string) (utils
 	server := httptest.NewServer(createGitLabHandler(t, gitServerParams))
 
 	testDir, cleanUp := utils.CopyTestdataProjectsToTemp(t, "scanpullrequest")
-	configAggregator, client := prepareConfigAndClient(t, xrayVersion, xscVersion, configPath, server, params, gitServerParams)
+	config, client := prepareConfigAndClient(t, xrayVersion, xscVersion, server, params, gitServerParams)
 
 	// Renames test git folder to .git
 	currentDir := filepath.Join(testDir, projectName)
 	restoreDir, err := utils.Chdir(currentDir)
 	assert.NoError(t, err)
 
-	return configAggregator, client, func() {
+	return config, client, func() {
 		assert.NoError(t, restoreDir())
 		assert.NoError(t, fileutils.RemoveTempDir(currentDir))
 		cleanUp()
@@ -1191,7 +1026,7 @@ func createGitLabHandler(t *testing.T, params GitServerParams) http.HandlerFunc 
 			w.WriteHeader(http.StatusOK)
 			// expectedResponse, err := os.ReadFile(filepath.Join("..", "expectedPullRequestDetailsResponse.json"))
 			// assert.NoError(t, err)
-			_, err := w.Write([]byte(fmt.Sprintf(`{ "id": %d, "iid": 133, "project_id": 15513260, "title": "Dummy pull request", "description": "this is pr description", "state": "opened", "target_branch": "%s", "source_branch": "%s", "author": {"username": "testuser"}}`, params.prDetails.ID, params.prDetails.Target.Name, params.prDetails.Source.Name)))
+			_, err := fmt.Fprintf(w, `{ "id": %d, "iid": 133, "project_id": 15513260, "title": "Dummy pull request", "description": "this is pr description", "state": "opened", "target_branch": "%s", "source_branch": "%s", "author": {"username": "testuser"}}`, params.prDetails.ID, params.prDetails.Target.Name, params.prDetails.Source.Name)
 			assert.NoError(t, err)
 		// Mimic download specific branch to scan
 		case r.RequestURI == fmt.Sprintf("/api/v4/projects/%s/repository/archive.tar.gz?sha=%s", repoInfo, params.prDetails.Source.Name):

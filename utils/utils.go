@@ -13,12 +13,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/jfrog/frogbot/v2/utils/issues"
 	"github.com/jfrog/froggit-go/vcsclient"
 	"github.com/jfrog/gofrog/version"
 	"github.com/jfrog/jfrog-cli-core/v2/common/commands"
 	"github.com/jfrog/jfrog-cli-core/v2/utils/config"
-	"github.com/jfrog/jfrog-cli-core/v2/utils/usage"
 	"github.com/jfrog/jfrog-cli-security/utils"
 	"github.com/jfrog/jfrog-cli-security/utils/formats"
 	"github.com/jfrog/jfrog-cli-security/utils/formats/snapshotconvertor"
@@ -30,17 +28,18 @@ import (
 	"github.com/jfrog/jfrog-client-go/utils/errorutils"
 	"github.com/jfrog/jfrog-client-go/utils/io/fileutils"
 	"github.com/jfrog/jfrog-client-go/utils/log"
+
+	"github.com/jfrog/frogbot/v2/utils/issues"
 )
 
 const (
 	ScanPullRequest                     = "scan-pull-request"
-	ScanAllPullRequests                 = "scan-all-pull-requests"
 	ScanRepository                      = "scan-repository"
-	ScanMultipleRepositories            = "scan-multiple-repositories"
 	RootDir                             = "."
 	branchNameRegex                     = `[~^:?\\\[\]@{}*]`
 	dependencySubmissionFrogbotDetector = "JFrog Frogbot"
 	frogbotUrl                          = "https://github.com/jfrog/frogbot"
+	frogbotUploadRtRepoPath             = "frogbot"
 
 	// Branch validation error messages
 	branchInvalidChars             = "branch name cannot contain the following chars  ~, ^, :, ?, *, [, ], @, {, }"
@@ -54,7 +53,6 @@ const (
 )
 
 var (
-	TrueVal                 = true
 	FrogbotVersion          = "0.0.0"
 	branchInvalidCharsRegex = regexp.MustCompile(branchNameRegex)
 )
@@ -150,14 +148,6 @@ func (e *ErrMissingEnv) IsMissingEnvErr(err error) bool {
 	return errors.As(err, &e)
 }
 
-type ErrMissingConfig struct {
-	missingReason string
-}
-
-func (e *ErrMissingConfig) Error() string {
-	return fmt.Sprintf("config file is missing: %s", e.missingReason)
-}
-
 func Chdir(dir string) (cbk func() error, err error) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -167,39 +157,6 @@ func Chdir(dir string) (cbk func() error, err error) {
 		return nil, fmt.Errorf("could not change dir to: %s\n%s", dir, err.Error())
 	}
 	return func() error { return os.Chdir(wd) }, err
-}
-
-func ReportUsageOnCommand(commandName string, serverDetails *config.ServerDetails, repositories RepoAggregator) func() {
-	reporter := usage.NewUsageReporter(productId, serverDetails)
-	reports, err := convertToUsageReports(commandName, repositories)
-	if err != nil {
-		log.Debug(usage.ArtifactoryCallHomePrefix, "Could not create usage data to report", err.Error())
-		return func() {}
-	}
-	reporter.Report(reports...)
-	return func() {
-		// Ignoring errors on purpose, we don't want to confuse the user with errors on usage reporting.
-		_ = reporter.WaitForResponses()
-	}
-}
-
-func convertToUsageReports(commandName string, repositories RepoAggregator) (reports []usage.ReportFeature, err error) {
-	if len(repositories) == 0 {
-		err = fmt.Errorf("no repositories info provided")
-		return
-	}
-	for _, repository := range repositories {
-		// Report one entry for each repository as client
-		if clientId, e := Md5Hash(repository.RepoName); e != nil {
-			err = errors.Join(err, e)
-		} else {
-			reports = append(reports, usage.ReportFeature{
-				FeatureId: commandName,
-				ClientId:  clientId,
-			})
-		}
-	}
-	return
 }
 
 func Md5Hash(values ...string) (string, error) {
@@ -284,7 +241,6 @@ func GenerateFrogbotSarifReport(extendedResults *results.SecurityCommandResults,
 	convertor := conversion.NewCommandResultsConvertor(conversion.ResultConvertParams{
 		IncludeVulnerabilities: extendedResults.IncludesVulnerabilities(),
 		HasViolationContext:    extendedResults.HasViolationContext(),
-		AllowedLicenses:        allowedLicenses,
 	})
 	sarifReport, err := convertor.ConvertToSarif(extendedResults)
 	if err != nil {
@@ -308,14 +264,6 @@ func DownloadRepoToTempDir(client vcsclient.VcsClient, repoOwner, repoName, bran
 	}
 	log.Debug("Repository download completed")
 	return
-}
-
-func ValidateSingleRepoConfiguration(configAggregator *RepoAggregator) error {
-	// Multi repository configuration is supported only in the scanallpullrequests and scanmultiplerepositories commands.
-	if len(*configAggregator) > 1 {
-		return errors.New(errUnsupportedMultiRepo)
-	}
-	return nil
 }
 
 // GetRelativeWd receive a base working directory along with a full path containing the base working directory, and the relative part is returned without the base prefix.
