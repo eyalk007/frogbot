@@ -246,6 +246,10 @@ func autoDetectCIEnvVars() {
 		}
 	case os.Getenv("JENKINS_URL") != "":
 		autoDetectJenkins()
+	case os.Getenv("BITBUCKET_BUILD_NUMBER") != "":
+		if gitProvider == "" || gitProvider == string(BitbucketCloud) {
+			autoDetectBitbucketPipelines()
+		}
 	}
 }
 
@@ -381,6 +385,52 @@ func autoDetectJenkins() {
 	}
 }
 
+func autoDetectBitbucketPipelines() {
+	if os.Getenv(GitProvider) == "" {
+		if err := os.Setenv(GitProvider, string(BitbucketCloud)); err != nil {
+			log.Warn("Failed to set JF_GIT_PROVIDER:", err)
+		}
+	}
+
+	if os.Getenv(GitRepoOwnerEnv) == "" {
+		if workspace := os.Getenv("BITBUCKET_WORKSPACE"); workspace != "" {
+			if err := os.Setenv(GitRepoOwnerEnv, workspace); err != nil {
+				log.Warn("Failed to set JF_GIT_OWNER:", err)
+			}
+		}
+	}
+
+	if os.Getenv(GitRepoEnv) == "" {
+		if repoSlug := os.Getenv("BITBUCKET_REPO_SLUG"); repoSlug != "" {
+			if err := os.Setenv(GitRepoEnv, repoSlug); err != nil {
+				log.Warn("Failed to set JF_GIT_REPO:", err)
+			}
+		}
+	}
+
+	if os.Getenv(GitBaseBranchEnv) == "" {
+		// For PR pipelines, use the destination branch
+		if destBranch := os.Getenv("BITBUCKET_PR_DESTINATION_BRANCH"); destBranch != "" {
+			if err := os.Setenv(GitBaseBranchEnv, destBranch); err != nil {
+				log.Warn("Failed to set JF_GIT_BASE_BRANCH:", err)
+			}
+		} else if branch := os.Getenv("BITBUCKET_BRANCH"); branch != "" {
+			// For non-PR pipelines, use the current branch
+			if err := os.Setenv(GitBaseBranchEnv, branch); err != nil {
+				log.Warn("Failed to set JF_GIT_BASE_BRANCH:", err)
+			}
+		}
+	}
+
+	if os.Getenv(GitPullRequestIDEnv) == "" {
+		if prID := os.Getenv("BITBUCKET_PR_ID"); prID != "" {
+			if err := os.Setenv(GitPullRequestIDEnv, prID); err != nil {
+				log.Warn("Failed to set JF_GIT_PULL_REQUEST_ID:", err)
+			}
+		}
+	}
+}
+
 func extractGitParamsFromEnvs() (*Git, error) {
 	e := &ErrMissingEnv{}
 	var err error
@@ -479,13 +529,14 @@ func extractVcsProviderFromEnv() (vcsutils.VcsProvider, error) {
 		return vcsutils.GitHub, nil
 	case string(GitLab):
 		return vcsutils.GitLab, nil
-	// For backward compatibility, we are accepting also "bitbucket server"
-	case string(BitbucketServer), "bitbucket server":
+	case string(BitbucketServer):
 		return vcsutils.BitbucketServer, nil
+	case string(BitbucketCloud):
+		return vcsutils.BitbucketCloud, nil
 	case string(AzureRepos):
 		return vcsutils.AzureRepos, nil
 	}
-	return 0, fmt.Errorf("%s should be one of: '%s', '%s', '%s' or '%s'", GitProvider, GitHub, GitLab, BitbucketServer, AzureRepos)
+	return 0, fmt.Errorf("%s should be one of: '%s', '%s', '%s', '%s' or '%s'", GitProvider, GitHub, GitLab, BitbucketServer, BitbucketCloud, AzureRepos)
 }
 
 func SanitizeEnv() error {

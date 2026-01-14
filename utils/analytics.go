@@ -32,7 +32,8 @@ func resolveCi() string {
 		return string(jenkins)
 	case strings.ToLower(os.Getenv("TF_BUILD")) == "true":
 		return string(azurePipelines)
-	// Currently, there isn't an environment variable specifically designed to identify JFrog Pipelines.
+	case os.Getenv("BITBUCKET_BUILD_NUMBER") != "":
+		return string(bitbucketPipelines)
 	default:
 		return ""
 	}

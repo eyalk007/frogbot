@@ -15,13 +15,15 @@ const (
 	GitHub          vcsProvider = "github"
 	GitLab          vcsProvider = "gitlab"
 	BitbucketServer vcsProvider = "bitbucketServer"
+	BitbucketCloud  vcsProvider = "bitbucketCloud"
 	AzureRepos      vcsProvider = "azureRepos"
 
 	// CI providers params
-	githubActions  ciProvider = "github-actions"
-	jenkins        ciProvider = "jenkins"
-	gitlab         ciProvider = "gitlab"
-	azurePipelines ciProvider = "azure-pipelines"
+	githubActions      ciProvider = "github-actions"
+	jenkins            ciProvider = "jenkins"
+	gitlab             ciProvider = "gitlab"
+	azurePipelines     ciProvider = "azure-pipelines"
+	bitbucketPipelines ciProvider = "bitbucket-pipelines"
 
 	// JFrog platform environment variables
 	JFrogUrlEnv            = "JF_URL"
