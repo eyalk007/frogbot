@@ -1,6 +1,6 @@
 module github.com/jfrog/frogbot/v2
 
-go 1.24.6
+go 1.25.0
 
 require (
 	github.com/CycloneDX/cyclonedx-go v0.9.2
@@ -110,7 +110,7 @@ require (
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/crypto v0.38.0 // indirect
-	golang.org/x/mod v0.24.0 // indirect
+	golang.org/x/mod v0.40.0 // indirect
 	golang.org/x/net v0.40.0 // indirect
 	golang.org/x/oauth2 v0.29.0 // indirect
 	golang.org/x/sync v0.14.0 // indirect
